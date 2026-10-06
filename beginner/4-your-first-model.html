@@ -695,7 +695,7 @@ from {{ source('ecommerce', 'orders') }} as o</code></pre>
   <div class="callout__icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-triangle-alert"></use></svg></div>
   <div>
     <div class="callout__title">The key is <code>materialized</code></div>
-    <p>The old guide wrote <code>materialization='table'</code>, which dbt ignores. The correct config is <code>materialized='table'</code> — same word you use in <code>dbt_project.yml</code> as <code>+materialized</code>.</p>
+    <p>A common mistake is writing <code>materialization='table'</code>. dbt silently ignores unknown config keys, so the model quietly stays a view. The correct key is <code>materialized='table'</code> — the same word you use in <code>dbt_project.yml</code> as <code>+materialized</code>.</p>
   </div>
 </div>
 

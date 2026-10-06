@@ -135,7 +135,7 @@ having count(*) &gt; 1</code></pre>
 <div class="callout callout--info">
   <div class="callout__icon">{{icon:search}}</div>
   <div>
-    <div class="callout__title">The old page had these backwards</div>
+    <div class="callout__title">Don't mix up the two tests</div>
     <p><code>not_null</code> does <em>not</em> group and count; it simply selects rows where the column is null. <code>unique</code> is the one that groups and uses <code>having count(*) &gt; 1</code>. Reading the compiled query in <code>target/compiled/</code> shows exactly which rule fired.</p>
   </div>
 </div>

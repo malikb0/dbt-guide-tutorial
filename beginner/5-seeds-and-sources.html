@@ -675,7 +675,7 @@ order by revenue desc</code></pre>
   <div class="callout__icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-triangle-alert"></use></svg></div>
   <div>
     <div class="callout__title">Do not join on a bare table name</div>
-    <p>The old guide wrote <code>join customers c</code>, which bypasses dbt entirely. Use <code>{{ ref('country_codes') }}</code> for the seed and <code>{{ source('ecommerce', 'customers') }}</code> for the raw table so the dependency graph stays correct.</p>
+    <p>Joining on a bare table name such as <code>join customers c</code> bypasses dbt entirely. Use <code>{{ ref('country_codes') }}</code> for the seed and <code>{{ source('ecommerce', 'customers') }}</code> for the raw table so the dependency graph stays correct.</p>
   </div>
 </div>
 

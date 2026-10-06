@@ -25,7 +25,7 @@ Clear, confident, plain English. Explain *why* before *how*. Use concrete
 e-commerce examples (customers, orders, products). Short paragraphs. No filler.
 Do not invent dbt features. No emoji inside headings (the UI uses line icons).
 
-## Accuracy rules (IMPORTANT — the old pages got these wrong)
+## Accuracy rules (IMPORTANT — these are commonly gotten wrong)
 - Incremental models: dbt does **not** auto-add `WHERE order_date > MAX(...)`.
   The user must write `{% if is_incremental() %} where order_date > (select max(order_date) from {{ this }}) {% endif %}`.
 - Never reference a model with a bare table name — always `{{ ref('name') }}`.

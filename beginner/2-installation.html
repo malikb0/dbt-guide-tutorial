@@ -628,7 +628,7 @@ cd ecommerce_analytics</code></pre>
   <div class="callout__icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-triangle-alert"></use></svg></div>
   <div>
     <div class="callout__title">The nesting bug</div>
-    <p>The old page ran <code>mkdir ecommerce-analytics &amp;&amp; cd ecommerce-analytics</code> and then <code>dbt init ecommerce-analytics</code>. Because <code>dbt init</code> also creates that folder, the project ended up nested one level too deep at <code>ecommerce-analytics/ecommerce-analytics/</code>. Run <code>dbt init</code> from the parent directory and never pre-create the folder.</p>
+    <p>A common pitfall is running <code>mkdir ecommerce-analytics &amp;&amp; cd ecommerce-analytics</code> before <code>dbt init ecommerce-analytics</code>. Because <code>dbt init</code> also creates that folder, the project ends up nested one level too deep at <code>ecommerce-analytics/ecommerce-analytics/</code>. Run <code>dbt init</code> from the parent directory and never pre-create the folder.</p>
   </div>
 </div>
 
