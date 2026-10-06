@@ -5,6 +5,9 @@ topic pages across four levels, built as a fully static, offline-capable website
 with real SVG diagrams, syntax highlighting, progress tracking and a light/dark
 theme. Built around **DuckDB** so every example runs locally with no cloud account.
 
+**▶ Live tutorial — <https://malikb0.github.io/dbt-guide-tutorial>**
+
+[![Live site](https://img.shields.io/badge/live-malikb0.github.io%2Fdbt--guide--tutorial-4f8cff?logo=githubpages&logoColor=white)](https://malikb0.github.io/dbt-guide-tutorial)
 [![dbt](https://img.shields.io/badge/dbt-1.8%2B-FF694A)](https://www.getdbt.com/)
 [![DuckDB](https://img.shields.io/badge/warehouse-DuckDB-FFF000)](https://duckdb.org/)
 [![Node.js](https://img.shields.io/badge/build-Node.js%2018%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
@@ -242,8 +245,8 @@ build-time only and are excluded from `_site/`.
 ### URL / SEO configuration
 
 `SITE.url` in [`data/topics.mjs`](data/topics.mjs) is the single knob. It defaults
-to `https://your-username.github.io/dbt-guide-tutorial`; override it without
-editing code:
+to this project's Pages URL
+(`https://malikb0.github.io/dbt-guide-tutorial`); override it without editing code:
 
 ```bash
 SITE_URL=https://example.com/ npm run build

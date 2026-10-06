@@ -17,7 +17,7 @@ export const SITE = {
   // Absolute base URL of the deployed site — drives <link rel="canonical">,
   // og:url, absolute og:image and sitemap.xml. Override at build time with
   // SITE_URL=… (the GitHub Pages workflow sets it from the Pages URL).
-  url: (process.env.SITE_URL || 'https://your-username.github.io/dbt-guide-tutorial').replace(/\/+$/, ''),
+  url: (process.env.SITE_URL || 'https://malikb0.github.io/dbt-guide-tutorial').replace(/\/+$/, ''),
 };
 
 export const LEVELS = [
