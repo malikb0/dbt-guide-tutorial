@@ -29,15 +29,34 @@ function use(name, x, y, size = 18, color = 'var(--accent)', sw = 2) {
   return `<use href="#i-${name}" x="${x}" y="${y}" width="${size}" height="${size}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
 
+// Keep a text run inside its node: shrink the font a little, then clamp the
+// rendered length as a last resort. Without this, long sub-labels overflow the
+// rectangle (SVG text never wraps on its own).
+function fitText(text, avail, base, ratio) {
+  const need = text.length * ratio * base;
+  if (need <= avail) return '';
+  const min = base - 2;
+  let fs = Math.max(min, (base * avail) / need);
+  fs = Math.max(min, Math.min(base, fs));
+  let attr = ` font-size="${fs.toFixed(1)}"`;
+  if (text.length * ratio * fs > avail) {
+    attr += ` textLength="${avail.toFixed(1)}" lengthAdjust="spacingAndGlyphs"`;
+  }
+  return attr;
+}
+
 function node({ x, y, w = 148, h = 58, title, sub, cls = 'dg-node', icon, iconColor = 'var(--accent)', centered = false }) {
   const tx = icon ? x + 42 : x + 15;
   const anchor = centered ? 'middle' : 'start';
   const cx = centered ? x + w / 2 : tx;
+  const avail = centered ? w - 24 : icon ? w - 54 : w - 27;
+  const titleAttr = fitText(title, avail, 12, 0.66);
+  const subAttr = sub ? fitText(sub, avail, 10, 0.66) : '';
   return `<g>
     <rect class="${cls}" x="${x}" y="${y}" width="${w}" height="${h}" rx="12"/>
     ${icon ? use(icon, x + 13, y + h / 2 - 9, 18, iconColor) : ''}
-    <text class="dg-label" x="${cx}" y="${y + (sub ? h / 2 - 1 : h / 2 + 1)}" text-anchor="${anchor}" dominant-baseline="middle">${esc(title)}</text>
-    ${sub ? `<text class="dg-sub" x="${cx}" y="${y + h / 2 + 15}" text-anchor="${anchor}" dominant-baseline="middle">${esc(sub)}</text>` : ''}
+    <text class="dg-label" x="${cx}" y="${y + (sub ? h / 2 - 1 : h / 2 + 1)}" text-anchor="${anchor}" dominant-baseline="middle"${titleAttr}>${esc(title)}</text>
+    ${sub ? `<text class="dg-sub" x="${cx}" y="${y + h / 2 + 15}" text-anchor="${anchor}" dominant-baseline="middle"${subAttr}>${esc(sub)}</text>` : ''}
   </g>`;
 }
 

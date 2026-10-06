@@ -507,7 +507,7 @@
   </g><g>
     <rect class="dg-node dg-node--source" x="290" y="40" width="180" height="40" rx="12"/>
     <use href="#i-package-open" x="303" y="51" width="18" height="18" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="dg-label" x="332" y="61" text-anchor="start" dominant-baseline="middle">artifact (manifest)</text>
+    <text class="dg-label" x="332" y="61" text-anchor="start" dominant-baseline="middle" font-size="10.0">artifact (manifest)</text>
     
   </g><path class="dg-edge dg-edge--accent" d="M380,80 L380,120" marker-end="url(#arr-environments-a)"/><text class="dg-sub" x="380" y="250" text-anchor="middle">same build promoted · prod gated by approval · rollback = redeploy previous artifact</text></svg>
   </div>
@@ -578,13 +578,13 @@
   </defs><g>
     <rect class="dg-node dg-node--source" x="20" y="130" width="150" height="64" rx="12"/>
     <use href="#i-satellite" x="33" y="153" width="18" height="18" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="dg-label" x="62" y="161" text-anchor="start" dominant-baseline="middle">Source systems</text>
-    <text class="dg-sub" x="62" y="177" text-anchor="start" dominant-baseline="middle">Postgres · API · files</text>
+    <text class="dg-label" x="62" y="161" text-anchor="start" dominant-baseline="middle" font-size="10.4">Source systems</text>
+    <text class="dg-sub" x="62" y="177" text-anchor="start" dominant-baseline="middle" font-size="8.0" textLength="96.0" lengthAdjust="spacingAndGlyphs">Postgres · API · files</text>
   </g><g>
     <rect class="dg-node" x="215" y="130" width="130" height="64" rx="12"/>
     <use href="#i-database" x="228" y="153" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="dg-label" x="257" y="161" text-anchor="start" dominant-baseline="middle">Raw tables</text>
-    <text class="dg-sub" x="257" y="177" text-anchor="start" dominant-baseline="middle">landed, untrusted</text>
+    <text class="dg-label" x="257" y="161" text-anchor="start" dominant-baseline="middle" font-size="11.5" textLength="76.0" lengthAdjust="spacingAndGlyphs">Raw tables</text>
+    <text class="dg-sub" x="257" y="177" text-anchor="start" dominant-baseline="middle" font-size="8.0" textLength="76.0" lengthAdjust="spacingAndGlyphs">landed, untrusted</text>
   </g><g><rect x="375" y="82" width="250" height="180" rx="16" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="7 6" opacity=".7"/>
   <rect x="389" y="71" width="149.6" height="22" rx="11" fill="var(--bg-2)" stroke="var(--accent)" stroke-width="1"/>
   <text x="399" y="82" dominant-baseline="middle" font-family="var(--font-mono)" font-size="11" fill="var(--accent)">dbt transformation</text></g><g>
@@ -601,7 +601,7 @@
     <rect class="dg-node dg-node--out" x="650" y="130" width="92" height="64" rx="12"/>
     <use href="#i-chart-line" x="663" y="153" width="18" height="18" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     <text class="dg-label" x="692" y="161" text-anchor="start" dominant-baseline="middle">BI</text>
-    <text class="dg-sub" x="692" y="177" text-anchor="start" dominant-baseline="middle">dashboards</text>
+    <text class="dg-sub" x="692" y="177" text-anchor="start" dominant-baseline="middle" font-size="8.0" textLength="38.0" lengthAdjust="spacingAndGlyphs">dashboards</text>
   </g><path class="dg-edge dg-edge--accent" d="M170,162 L215,162" marker-end="url(#arr-pipeline-a)"/><path class="dg-edge dg-edge--accent" d="M345,162 L395,134" marker-end="url(#arr-pipeline-a)"/><path class="dg-edge dg-edge--accent" d="M605,134 L650,150" marker-end="url(#arr-pipeline-a)"/><path class="dg-edge dg-edge--accent" d="M500,156 L500,172" marker-end="url(#arr-pipeline-a)"/><text class="dg-sub" x="380" y="300" text-anchor="middle" font-size="11">ref() stitches models into a DAG — dbt runs them in dependency order</text></svg>
   </div>
   <figcaption class="diagram__caption">Raw data lands in the warehouse, dbt models transform it, BI reads the marts.</figcaption>
@@ -659,18 +659,18 @@
   </g><path class="dg-edge dg-edge--accent" d="M185,150 L205,150" marker-end="url(#arr-cicd-a)"/><g>
     <rect class="dg-node dg-node--accent" x="205" y="110" width="165" height="80" rx="12"/>
     <use href="#i-circle-check" x="218" y="141" width="18" height="18" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="dg-label" x="247" y="149" text-anchor="start" dominant-baseline="middle">CI · lint+build+test</text>
-    <text class="dg-sub" x="247" y="165" text-anchor="start" dominant-baseline="middle">on a clone schema</text>
+    <text class="dg-label" x="247" y="149" text-anchor="start" dominant-baseline="middle" font-size="10.0" textLength="111.0" lengthAdjust="spacingAndGlyphs">CI · lint+build+test</text>
+    <text class="dg-sub" x="247" y="165" text-anchor="start" dominant-baseline="middle" font-size="9.9">on a clone schema</text>
   </g><path class="dg-edge dg-edge--accent" d="M370,150 L390,150" marker-end="url(#arr-cicd-a)"/><g>
     <rect class="dg-node dg-node--accent" x="390" y="110" width="165" height="80" rx="12"/>
     <use href="#i-git-merge" x="403" y="141" width="18" height="18" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     <text class="dg-label" x="432" y="149" text-anchor="start" dominant-baseline="middle">Merge to main</text>
-    <text class="dg-sub" x="432" y="165" text-anchor="start" dominant-baseline="middle">artifact produced</text>
+    <text class="dg-sub" x="432" y="165" text-anchor="start" dominant-baseline="middle" font-size="9.9">artifact produced</text>
   </g><path class="dg-edge dg-edge--accent" d="M555,150 L575,150" marker-end="url(#arr-cicd-a)"/><g>
     <rect class="dg-node dg-node--accent" x="575" y="110" width="165" height="80" rx="12"/>
     <use href="#i-rocket" x="588" y="141" width="18" height="18" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     <text class="dg-label" x="617" y="149" text-anchor="start" dominant-baseline="middle">CD · deploy</text>
-    <text class="dg-sub" x="617" y="165" text-anchor="start" dominant-baseline="middle">dev → staging → prod</text>
+    <text class="dg-sub" x="617" y="165" text-anchor="start" dominant-baseline="middle" font-size="8.4">dev → staging → prod</text>
   </g><g>
     <rect class="dg-node" x="20" y="235" width="720" height="44" rx="12"/>
     <use href="#i-workflow" x="33" y="248" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
