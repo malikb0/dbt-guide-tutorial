@@ -1,0 +1,289 @@
+<p class="lead">Running <code>dbt build</code> on your laptop is not deployment. Deployment is the discipline of turning a reviewed commit into trusted production tables — repeatably, with a record of what changed, who approved it, and a safe way to undo it.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">The deployment contract</div>
+    <p>Build the <strong>same code</strong> for every environment, prove it on staging before production, and gate the last step behind <strong>tests and an approval</strong>. Rollback should be another deploy — not a fire drill.</p>
+  </div>
+</div>
+
+<h2>Environments are just named targets</h2>
+
+<p>In dbt Core an "environment" is not a separate product — it is a named <strong>output</strong> in your <code>profiles.yml</code>. Each output points at a different database file or warehouse, and usually a different schema. A single CLI flag chooses which one you build against.</p>
+
+{{diagram:environments|One codebase, three targets. The same commit is built for dev, validated in staging, then promoted to production.}}
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Environment</th><th>Who runs it</th><th>Schema / database</th><th>Flag</th></tr></thead>
+    <tbody>
+      <tr><td>dev</td><td>Analytics engineers locally</td><td><code>dbt_dev</code> in a personal file</td><td><code>--target dev</code></td></tr>
+      <tr><td>CI (staging-like)</td><td>The pipeline only</td><td>a scratch schema rebuilt per pull request</td><td><code>--target ci</code></td></tr>
+      <tr class="highlight"><td>production</td><td>The CD job only</td><td><code>analytics</code>, the serving layer</td><td><code>dbt build --target prod</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Notice that humans never build production locally. Separating the <em>target</em> from the <em>person</em> is what makes approvals and rollback possible later on this page.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">profiles.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">ecommerce:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: dev.duckdb
+      schema: dbt_dev
+      threads: 4
+    ci:
+      type: duckdb
+      path: ci.duckdb
+      schema: dbt_ci
+      threads: 4
+    prod:
+      type: duckdb
+      path: "{{ env_var('DBT_PROD_PATH') }}"
+      schema: analytics
+      threads: 1</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:key}}</div>
+  <div>
+    <div class="callout__title">Secrets never live in the repo</div>
+    <p>The committed <code>profiles.yml</code> references <code>env_var('DBT_PROD_PATH')</code>; the real value arrives from CI secrets or your shell in dev. Commit the shape, never the secret.</p>
+  </div>
+</div>
+
+<h2>Build once, promote everywhere</h2>
+
+<p>People call two different things "the build": the <strong>compiled project</strong> — dbt's <code>manifest.json</code>, containing the DAG and rendered SQL — and the <strong>materialized tables</strong> in a warehouse. dbt promotes the first directly; the second is produced by running that manifest against a target.</p>
+
+{{diagram:pipeline|The deployable DAG is identical in every environment — only the target schema changes.}}
+
+<p>That distinction pays off in CI. A pull request can build the changed models into a scratch schema while <strong>deferring</strong> unchanged upstream models to production data. Reviewers see real results without paying to rebuild the entire warehouse.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">macros/generate_schema_name.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% macro generate_schema_name(custom_schema_name, node) -%}
+    {%- set default_schema = target.schema -%}
+    {%- if custom_schema_name is none -%}
+        {{ default_schema }}
+    {%- else -%}
+        {{ default_schema }}_{{ custom_schema_name | trim }}
+    {%- endif -%}
+{%- endmacro %}</code></pre>
+</div>
+
+<p>This standard override means a model configured with <code>schema: marts</code> lands in <code>dbt_dev_marts</code> during development and <code>analytics_marts</code> in production — same code, environment-appropriate location.</p>
+
+<div class="flow">
+  <span class="flow__node">{{icon:git-pull-request}} Commit</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:circle-check}} CI build + test</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:package-open}} Manifest artifact</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:rocket}} Deploy to prod</span>
+</div>
+
+<h2>CI: prove every pull request</h2>
+
+<p>Continuous integration answers one question: <em>will this change break the warehouse?</em> The job checks out the branch, installs dbt, then builds only what changed — plus everything downstream — into an isolated schema.</p>
+
+{{diagram:cicd|CI runs on the pull request; CD promotes to production after the merge.}}
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Checkout and install</div><p class="step__body">Restore the repo, install the pinned adapter, and run <code>dbt deps</code> so package versions match the lockfile.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Select what changed</div><p class="step__body"><code>--select state:modified+</code> compares the new manifest to a stored production manifest and picks the changed models plus all their children.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Build and test on a clone</div><p class="step__body">dbt builds into a disposable CI schema and defers unchanged upstream models to production. Tests run against the result.</p></div></div>
+  <div class="step reveal"><div class="step__marker">4</div><div><div class="step__title">Report on the pull request</div><p class="step__body">A failed test fails the job, so broken SQL never reaches <code>main</code>.</p></div></div>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">.github/workflows/dbt-ci.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">name: dbt CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DBT_PROFILES_DIR: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install "dbt-duckdb&gt;=1.8"
+      - run: dbt deps
+      - name: Build changed models into a CI schema
+        run: dbt build --target ci --select state:modified+ --defer --state ./prod-state
+      - name: Test changed models
+        run: dbt test --target ci --select state:modified+</code></pre>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">Store a production manifest to compare against</div>
+    <p><code>--defer --state</code> needs a reference manifest. Download the latest <code>manifest.json</code> from your production run as a build artifact and feed it to CI so dbt knows what is genuinely new.</p>
+  </div>
+</div>
+
+<h2>CD: deploy behind an approval</h2>
+
+<p>Continuous delivery deploys on merge to <code>main</code>. Production is a protected environment, so a person — or a policy — approves before any table changes.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">.github/workflows/dbt-deploy.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">name: dbt Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production        # required reviewers gate this job
+    env:
+      DBT_PROFILES_DIR: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install "dbt-duckdb&gt;=1.8"
+      - run: dbt deps
+      - name: Deploy the full DAG to production
+        run: dbt build --target prod
+        env:
+          DBT_PROD_PATH: ${{ secrets.DBT_PROD_PATH }}</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title"><code>dbt build</code> is not just a run</div>
+    <p>It runs <strong>models, tests, snapshots and seeds in DAG order</strong> and stops the failing branch. That ordering is the safety net: a mart never rebuilds on top of a staging model whose tests just failed.</p>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>Gate</th><th>Where it lives</th><th>What it blocks</th></tr></thead>
+    <tbody>
+      <tr><td>Lint + compile</td><td>CI</td><td>Syntax and Jinja errors</td></tr>
+      <tr><td>Data tests on changed models</td><td>CI</td><td>Wrong or missing rows before review</td></tr>
+      <tr><td>Peer review</td><td>Pull request</td><td>Logic and modelling mistakes</td></tr>
+      <tr class="highlight"><td>Environment approval</td><td>GitHub Environments</td><td>Unreviewed production changes</td></tr>
+      <tr><td>Post-deploy verification</td><td>CD</td><td>Regressions on the serving layer</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Roll back by redeploying</h2>
+
+<p>Because models are defined in code, the fastest safe rollback is to redeploy the last known-good commit. Resist hand-editing production tables — that creates drift nobody can reproduce.</p>
+
+<div class="timeline">
+  <div class="tl-item"><div class="tl-item__time">T+0</div><strong>Alert fires</strong><p>A dashboard shows revenue dropping minutes after a deploy.</p></div>
+  <div class="tl-item"><div class="tl-item__time">T+2m</div><strong>Freeze and assess</strong><p>Stop the schedule, inspect <code>run_results.json</code>, and identify the offending commit.</p></div>
+  <div class="tl-item"><div class="tl-item__time">T+5m</div><strong>Redeploy the previous commit</strong><p>Re-run the CD job against the prior tag, or restore the pre-deploy database snapshot.</p></div>
+  <div class="tl-item"><div class="tl-item__time">T+15m</div><strong>Confirm and write it up</strong><p>Verify tests pass, then reopen the change as a new pull request with the fix.</p></div>
+</div>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Failure</th><th>Rollback move</th></tr></thead>
+    <tbody>
+      <tr><td>Bad SQL in one model</td><td>Revert the model and redeploy the DAG; rebuild with <code>--select that_model+</code></td></tr>
+      <tr><td>Wrong grain in a mart</td><td>Redeploy the previous commit; add the missing <code>unique</code> test before re-landing</td></tr>
+      <tr><td>Destructive full refresh</td><td>Restore the warehouse snapshot, then re-run from the previous manifest</td></tr>
+      <tr class="highlight"><td>Silent bad data</td><td>Redeploy the last good manifest; the failing assertion becomes a permanent guard</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Deploy subsets with selectors, not hope</h2>
+
+<p>Production deploys rarely run everything. Tags and selection syntax let you rebuild exactly what a change touches while leaving the rest untouched.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># Rebuild models tagged nightly and everything downstream
+dbt build --target prod --select tag:nightly+
+
+# Deploy only changed models, comparing to the last production state
+dbt build --target prod --select state:modified+
+
+# Skip the slow marts and let the next scheduled run catch them
+dbt build --target prod --exclude tag:heavy</code></pre>
+</div>
+
+<div class="callout callout--danger">
+  <div class="callout__icon">{{icon:shield-check}}</div>
+  <div>
+    <div class="callout__title">Never <code>--full-refresh</code> blindly in production</div>
+    <p>A full refresh drops and rebuilds an incremental table. It is correct after a logic change to the incremental filter, but it is expensive and briefly leaves the table empty. Gate it behind a separate, approved job.</p>
+  </div>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>An environment is a named target in <code>profiles.yml</code>; <code>--target prod</code> is the whole switch.</span></li>
+  <li>{{icon:circle-check}}<span>Promote the compiled manifest, then materialize it per environment with <code>dbt build</code>.</span></li>
+  <li>{{icon:circle-check}}<span>CI builds <code>state:modified+</code> into a scratch schema with <code>--defer</code>, so reviewers get results without a full rebuild.</span></li>
+  <li>{{icon:circle-check}}<span>Gate production with a protected environment and an approval; <code>dbt build</code> already enforces DAG-order tests.</span></li>
+  <li>{{icon:circle-check}}<span>Rollback is a redeploy of the last good commit, not a manual edit of production tables.</span></li>
+</ul>
+
+<div class="quiz" data-explain="dbt build runs models, tests, snapshots and seeds together in DAG order; dbt run only executes models.">
+  <div class="quiz__q">{{icon:circle-help}} <span>What does <code>dbt build --target prod</code> do that <code>dbt run --target prod</code> does not?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>It deploys to every environment at once</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>It runs models, tests, snapshots and seeds in DAG order</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>It automatically creates the production schema</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Deployment is safe — but slow models still cost money. In <a href="./3-performance-expert.html">Expert Query Optimization</a> you'll read query plans, prune partitions and design a caching layer.</p>
+  </div>
+</div>

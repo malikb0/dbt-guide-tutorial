@@ -1,0 +1,29 @@
+# License
+
+This project is **dual-licensed**. Which license applies depends on what you use.
+
+| Part | What it covers | License |
+|------|----------------|---------|
+| **Content** | The tutorial itself — lessons, prose, diagrams, quizzes, examples — and the generated pages that present them | [CC BY-NC-ND 4.0](LICENSE-CONTENT) |
+| **Code** | The generator (`tools/`, `templates/`), runtime JS (`assets/js/`), styles (`css/`) and package metadata | [MIT](LICENSE-CODE) |
+| **Third-party assets** | Inter, JetBrains Mono, Prism.js, Lucide icons | Their own licenses — see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) |
+
+© 2026 Malik Awais. All rights reserved.
+
+## Content, in plain language
+
+You may read, learn from, and share the tutorial — in whole or in part — **with
+clear attribution** ("dbt Complete Tutorial", linking back to this repository)
+and for **non-commercial** purposes only.
+
+You may **not**: use it commercially; republish or redistribute it as a whole;
+publish modified, adapted, translated or rebranded versions; or present it as
+your own work. The binding terms are in [LICENSE-CONTENT](LICENSE-CONTENT).
+
+Want to go beyond these terms (e.g. use it in a paid course)? Open an issue to
+ask — permission is often easy to give.
+
+## Code
+
+The build tooling and site code are ordinary MIT-licensed software; see
+[LICENSE-CODE](LICENSE-CODE).

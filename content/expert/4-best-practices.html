@@ -1,0 +1,369 @@
+<p class="lead">Everything so far has been mechanics. This is judgment: how to structure a project, name things, review changes, document decisions, test at the right level, and which tempting patterns to ban outright. These conventions are what keep a warehouse trustworthy as a team grows.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">The maintainability test</div>
+    <p>A new analytics engineer should be able to answer <em>"where does this number come from?"</em> in under an hour, using only the repo and the docs site. Every convention on this page exists to make that true.</p>
+  </div>
+</div>
+
+<h2>Layer the project: staging → intermediate → marts</h2>
+
+<p>A dbt project is a pipeline, and a pipeline has layers. Each layer has one job. Mixing those jobs is how warehouses rot.</p>
+
+{{diagram:layers|Raw sources feed staging, staging feeds intermediate logic, and intermediate feeds business-ready marts.}}
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Layer</th><th>Its one job</th><th>Rules</th></tr></thead>
+    <tbody>
+      <tr><td><code>staging/</code></td><td>Clean one raw source table</td><td>One source table per model; rename, cast, deduplicate only; no joins</td></tr>
+      <tr><td><code>intermediate/</code></td><td>Reusable joins and business logic</td><td>Not exposed to BI; may join staging models; still narrow in purpose</td></tr>
+      <tr class="highlight"><td><code>marts/</code></td><td>Answer a business question</td><td>Wide, documented, tested; the only layer BI is allowed to read</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">project layout</span>
+    <span class="codeblock__lang">tree</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code>models/
+├── staging/
+│   └── ecommerce/
+│       ├── stg_ecommerce__orders.sql
+│       ├── stg_ecommerce__customers.sql
+│       └── _staging__models.yml
+├── intermediate/
+│   └── int_orders__joined.sql
+└── marts/
+    ├── core/
+    │   ├── fct_orders.sql
+    │   └── dim_customers.sql
+    └── _marts__models.yml</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:route}}</div>
+  <div>
+    <div class="callout__title">Dependencies only point downstream</div>
+    <p>Staging never references a mart. Intermediate never references a mart. If you feel the urge to build upward, you have found an intermediate model that belongs in its own layer.</p>
+  </div>
+</div>
+
+<h2>One model, one purpose</h2>
+
+<p>The most common structural mistake is the "god model": 400 lines that join six sources, filter, aggregate and format, all at once. It is impossible to test, review or reuse. Split it with CTEs instead.</p>
+
+<div class="pros-cons">
+  <div class="pc pc--pros"><div class="pc__title">{{icon:circle-check}} Small, layered models</div><ul>
+    <li>Each step is individually testable</li>
+    <li>A change touches one small file</li>
+    <li>Intermediate logic is reusable by several marts</li>
+    <li>Lineage shows exactly where a number comes from</li>
+  </ul></div>
+  <div class="pc pc--cons"><div class="pc__title">{{icon:circle-x}} One giant model</div><ul>
+    <li>Any test failure is hard to localize</li>
+    <li>Reviewers cannot reason about the whole file</li>
+    <li>Logic is duplicated because it cannot be reused</li>
+    <li>Every run rebuilds everything at once</li>
+  </ul></div>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/marts/core/fct_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">with orders as (
+    select order_id, customer_id, order_date, line_total
+    from {{ ref('stg_ecommerce__orders') }}
+),
+
+customers as (
+    select customer_id, region, segment
+    from {{ ref('stg_ecommerce__customers') }}
+),
+
+enriched as (
+    select
+        orders.order_id,
+        orders.order_date,
+        customers.customer_id,
+        customers.region,
+        customers.segment,
+        orders.line_total
+    from orders
+    left join customers
+        on orders.customer_id = customers.customer_id
+)
+
+select
+    order_id,
+    order_date,
+    customer_id,
+    region,
+    segment,
+    line_total
+from enriched</code></pre>
+</div>
+
+<h2>Marts and the star schema</h2>
+
+<p>The mart layer is where you model for the business, not for the source system. The durable pattern is a <strong>star schema</strong>: narrow fact tables surrounded by conformed dimensions.</p>
+
+{{diagram:marts|A fact table at the grain of a business event, joined to dimensions that describe it.}}
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>Model</th><th>Grain</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>fct_orders</code></td><td>One row per order</td><td>Numeric measures and foreign keys; declared grain must be unique</td></tr>
+      <tr><td><code>fct_order_items</code></td><td>One row per order line</td><td>Finer grain than <code>fct_orders</code>; do not mix the two in one table</td></tr>
+      <tr><td><code>dim_customers</code></td><td>One row per customer</td><td>Descriptive attributes; surrogate key, not just the natural key</td></tr>
+      <tr class="highlight"><td><code>dim_products</code></td><td>One row per product</td><td>Slowly changing attributes belong in a snapshot, not overwritten here</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:boxes}}</div>
+  <div>
+    <div class="callout__title">State the grain in the first line of the description</div>
+    <p>"One row per order" is not decoration — it is the contract every downstream aggregate depends on. Test it with <code>unique</code> on the grain columns.</p>
+  </div>
+</div>
+
+<h2>Naming conventions you can enforce</h2>
+
+<p>Names are the cheapest documentation you will ever write. Agree on them once, put them in <code>CONTRIBUTING.md</code>, and let review enforce them.</p>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Thing</th><th>Convention</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Staging model</td><td><code>stg_&lt;source&gt;__&lt;entity&gt;</code></td><td><code>stg_ecommerce__orders</code></td></tr>
+      <tr><td>Intermediate model</td><td><code>int_&lt;subject&gt;__&lt;verb&gt;</code></td><td><code>int_orders__joined</code></td></tr>
+      <tr><td>Fact / dimension</td><td><code>fct_</code> / <code>dim_</code> prefix</td><td><code>fct_orders</code>, <code>dim_customers</code></td></tr>
+      <tr><td>Columns</td><td>lowercase <code>snake_case</code></td><td><code>order_date</code>, not <code>OrderDate</code></td></tr>
+      <tr><td>Booleans</td><td><code>is_</code> / <code>has_</code> prefix</td><td><code>is_active</code></td></tr>
+      <tr><td>Timestamps / dates</td><td><code>_at</code> / <code>_date</code> suffix</td><td><code>created_at</code>, <code>order_date</code></td></tr>
+      <tr class="highlight"><td>Primary keys</td><td><code>&lt;entity&gt;_id</code>, unique</td><td><code>order_id</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:table-properties}}</div>
+  <div>
+    <div class="callout__title">The double underscore is meaningful</div>
+    <p>In <code>stg_ecommerce__orders</code>, everything before <code>__</code> is the source and everything after is the entity. It keeps names sortable and makes the origin of any model obvious at a glance.</p>
+  </div>
+</div>
+
+<h2>Documentation is part of the code</h2>
+
+<p>Undocumented models are liabilities. dbt puts documentation in the same repo as the SQL, versioned and reviewed alongside it.</p>
+
+{{diagram:lineage|Generated docs and lineage let anyone trace a metric back through each model to its source table.}}
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/marts/_marts__models.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+models:
+  - name: fct_orders
+    description: One row per completed order. Grain is order_id.
+    columns:
+      - name: order_id
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: Foreign key to dim_customers.
+        tests:
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id
+      - name: order_status
+        description: Lifecycle state of the order.
+        tests:
+          - accepted_values:
+              values: ['completed', 'returned', 'pending']</code></pre>
+</div>
+
+<p>Two commands turn that YAML into a searchable site. Run them in CI so docs are never stale:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># Build the docs site from your project metadata
+dbt docs generate
+
+# Serve it locally to browse lineage and column descriptions
+dbt docs serve</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Document the <em>why</em>, not the obvious</div>
+    <p><code>order_date</code> needs one line: which timezone, and which event. Don't restate the column name. Reviewers should reject a description that adds no information.</p>
+  </div>
+</div>
+
+<h2>A testing strategy, not test theater</h2>
+
+<p>You do not need a test on every column. You need tests on the <strong>critical path</strong> and at the <strong>layer boundaries</strong> where a wrong assumption is expensive. Match the test to the layer.</p>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Layer</th><th>Minimum tests</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Sources</td><td><code>not_null</code> + freshness</td><td>Catch upstream outages before they cascade</td></tr>
+      <tr><td>Staging</td><td><code>unique</code> + <code>not_null</code> on the primary key</td><td>Guarantee one clean row per entity</td></tr>
+      <tr><td>Intermediate</td><td>Tests for the specific join or rule</td><td>Assert the logic the model exists to provide</td></tr>
+      <tr class="highlight"><td>Marts</td><td><code>unique</code> on grain, <code>relationships</code>, <code>accepted_values</code></td><td>Protect the numbers BI and executives consume</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Severity decides what a failure does. Not every anomaly should halt the pipeline; but every <em>warning</em> should be visible and owned.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/marts/_marts__models.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">models:
+  - name: fct_orders
+    tests:
+      - dbt_utils.expression_is_true:
+          expression: "line_total &gt;= 0"
+          config:
+            severity: warn
+      - not_null:
+          column_name: order_id
+          config:
+            severity: error
+            store_failures: true</code></pre>
+</div>
+
+<div class="callout callout--danger">
+  <div class="callout__icon">{{icon:flask-conical}}</div>
+  <div>
+    <div class="callout__title">A test nobody acts on is worse than no test</div>
+    <p>If a warning has fired every day for a month, it has trained the team to ignore the board. Fix the data, set <code>severity: error</code>, or delete the test and document why.</p>
+  </div>
+</div>
+
+<h2>Code review that catches data bugs</h2>
+
+<p>A dbt pull request is a data contract change. Review the SQL, yes — but also the grain, the tests and the docs that ship with it.</p>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Read the description and the grain</div><p class="step__body">Does the model have a clear purpose and a stated grain? A vague description is a red flag for a vague model.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Check references, not table names</div><p class="step__body">Every upstream must be a <code>{{ ref(...) }}</code> or <code>{{ source(...) }}</code>. A hardcoded schema breaks on the next environment.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Verify the tests match the change</div><p class="step__body">A new primary key needs <code>unique</code> and <code>not_null</code>. A new foreign key needs <code>relationships</code>. A changed enum needs <code>accepted_values</code>.</p></div></div>
+  <div class="step reveal"><div class="step__marker">4</div><div><div class="step__title">Confirm CI is green and read the diff</div><p class="step__body">The CI job already built and tested the changed models. Trust it, but confirm the reviewer sees the same lineage impact you do.</p></div></div>
+</div>
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>Review question</th><th>What good looks like</th></tr></thead>
+    <tbody>
+      <tr><td>Is the model in the right layer?</td><td>Staging cleans one source; marts answer a question</td></tr>
+      <tr><td>Is the grain unique?</td><td>A <code>unique</code> test proves it</td></tr>
+      <tr><td>Are columns named consistently?</td><td><code>snake_case</code>, <code>_at</code>/<code>_date</code>, <code>is_</code></td></tr>
+      <tr><td>Is anything undocumented?</td><td>Model and non-obvious columns have descriptions</td></tr>
+      <tr class="highlight"><td>Could this have been an edit to an existing model?</td><td>New models are justified, not accidental forks</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Anti-patterns to ban</h2>
+
+<p>These are the habits that quietly turn a clean project into a legacy one. Name them in your style guide so review can point at a shared rule instead of personal taste.</p>
+
+<ul class="checklist checklist--x">
+  <li>{{icon:circle-x}}<span><code>select *</code> in a mart — schema changes leak into dashboards silently.</span></li>
+  <li>{{icon:circle-x}}<span>Hardcoded table or schema names instead of <code>{{ ref(...) }}</code> and <code>{{ source(...) }}</code>.</span></li>
+  <li>{{icon:circle-x}}<span>Business logic duplicated in the BI tool — two definitions, two different numbers.</span></li>
+  <li>{{icon:circle-x}}<span>Untested marts and undocumented primary keys.</span></li>
+  <li>{{icon:circle-x}}<span>God models that join, filter, aggregate and format in one file.</span></li>
+  <li>{{icon:circle-x}}<span>A nightly <code>--full-refresh</code> in production to "make it work".</span></li>
+  <li>{{icon:circle-x}}<span>Copy-pasting SQL between models instead of extracting a macro or intermediate model.</span></li>
+</ul>
+
+<div class="accordion">
+  <details class="acc"><summary>How many tests is enough?</summary><div class="acc__body"><p>Enough to protect the critical path and every layer boundary. Start with unique and not_null on primary keys, relationships on foreign keys, and freshness on sources. Add tests when a bug actually reaches production — each incident should leave a regression test behind.</p></div></details>
+  <details class="acc"><summary>When should a model be split?</summary><div class="acc__body"><p>When it has more than one clear purpose, when a downstream model only needs part of it, or when a reviewer cannot hold it in their head. Prefer CTEs within a model first; promote a CTE to its own model when it becomes reusable.</p></div></details>
+  <details class="acc"><summary>Do we need a custom materialization?</summary><div class="acc__body"><p>Almost never. Custom materializations are expert tools for logic the built-ins cannot express, such as external tables or specialised incremental patterns. If a <code>table</code>, <code>view</code> or <code>incremental</code> model with hooks can do it, use that. This is YAGNI applied to dbt.</p></div></details>
+  <details class="acc"><summary>One repo or one per domain?</summary><div class="acc__body"><p>Start with one repo and one project. Split into multiple projects only when team boundaries, release cadence or DAG size genuinely force it — cross-project <code>ref</code>s add real coordination cost.</p></div></details>
+</div>
+
+<h2>Single source of truth, enforced by convention</h2>
+
+<p>The point of all of this is trust: one definition of "revenue", one place to change it, one lineage to follow it. That is a social contract, and the repo is where you write it down.</p>
+
+<div class="cards">
+  <div class="card reveal"><div class="card__icon">{{icon:file-code}}</div><div class="card__title">A written style guide</div><p class="card__text">Layers, naming and testing rules live in <code>CONTRIBUTING.md</code>, versioned with the code they govern.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:git-pull-request}}</div><div class="card__title">Ownership in CODEOWNERS</div><p class="card__text">Each mart directory has a responsible team, so reviews are routed to people who understand the domain.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:file-check}}</div><div class="card__title">A pull request template</div><p class="card__text">Prompts for grain, tests and documentation turn good habits into a checklist nobody forgets.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:target}}</div><div class="card__title">Model metadata</div><p class="card__text">Use <code>meta</code> to record owner, sensitivity and SLA so governance is queryable, not tribal knowledge.</p></div>
+</div>
+
+<div class="callout callout--story">
+  <div class="callout__icon">{{icon:quote}}</div>
+  <div>
+    <div class="callout__title">The standard you walk past is the standard you accept</div>
+    <p>Every shortcut that reaches <code>main</code> becomes the example the next person copies. Reviewing for these conventions is not bureaucracy — it is how the warehouse stays trustworthy.</p>
+  </div>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>Layer the project: staging cleans one source, intermediate holds reusable logic, marts answer business questions.</span></li>
+  <li>{{icon:circle-check}}<span>One model, one purpose — split god models with CTEs, then promote reusable CTEs to models.</span></li>
+  <li>{{icon:circle-check}}<span>Name consistently (<code>stg_</code>, <code>int_</code>, <code>fct_</code>, <code>dim_</code>, <code>_at</code>, <code>is_</code>) and put the rules in <code>CONTRIBUTING.md</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Document the grain and the <em>why</em>; generate and publish the docs site so it can never go stale.</span></li>
+  <li>{{icon:circle-check}}<span>Test the critical path and layer boundaries, and act on every warning or delete it.</span></li>
+  <li>{{icon:circle-check}}<span>Ban the anti-patterns explicitly and review every pull request against the same shared checklist.</span></li>
+</ul>
+
+<div class="quiz" data-explain="One model should have one purpose. Splitting a god model into staging and intermediate models makes each step testable, reviewable and reusable.">
+  <div class="quiz__q">{{icon:circle-help}} <span>A model joins six sources, filters, aggregates and formats in 400 lines. What is the best-practices response?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>Add a single not_null test and leave it alone</span></button>
+    <button class="quiz__option" type="button"><span class="mark">B</span><span>Move it into the BI tool so it runs faster</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">C</span><span>Split it into layered models — staging per source, an intermediate join, a documented mart</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:graduation-cap}}</div>
+  <div>
+    <div class="callout__title">You've finished the Expert track</div>
+    <p>You now have the full dbt toolkit — from your first model to production promotion, partition strategy and team conventions. Revisit the <a href="./index.html">Expert overview</a> to mark it complete, or head <a href="../index.html">back to the course home</a> to review any level.</p>
+  </div>
+</div>

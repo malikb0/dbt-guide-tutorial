@@ -1,0 +1,280 @@
+<p class="lead">A model's <strong>materialization</strong> answers one question: how should dbt persist the result of this SQL? Build a view, rebuild a table, append only new rows, or inline the logic as a CTE. It is the setting that most affects freshness, query cost and run time — so it deserves a deliberate choice, not a copy-paste.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">A materialization is a storage decision</div>
+    <p>Your <code>SELECT</code> is always the same. The materialization decides what dbt <em>does</em> with it: store nothing, store a full copy, or store and maintain it incrementally.</p>
+  </div>
+</div>
+
+<h2>The four materializations at a glance</h2>
+
+<p>dbt ships four built-in materializations. They trade storage and build effort against freshness.</p>
+
+{{diagram:materializations|Four ways to persist a model — each trades freshness, storage and read speed.}}
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Materialization</th><th>What dbt creates</th><th>Freshness</th><th>Best for</th></tr></thead>
+    <tbody>
+      <tr><td>{{icon:eye}} View</td><td>A database view — no rows stored</td><td class="cell-good">Always fresh</td><td>Light transforms, early layers, fast iteration</td></tr>
+      <tr><td>{{icon:table}} Table</td><td>A physical table, dropped and rebuilt</td><td class="cell-ok">Fresh after each run</td><td>Expensive joins and aggregations read often</td></tr>
+      <tr><td>{{icon:refresh-cw}} Incremental</td><td>A table updated with only new or changed rows</td><td class="cell-ok">Fresh within the filter</td><td>Large event tables that keep growing</td></tr>
+      <tr><td>{{icon:component}} Ephemeral</td><td>Nothing — inlined as a CTE where it is referenced</td><td class="muted">No object to query</td><td>Small reusable building blocks</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:info}}</div>
+  <div>
+    <div class="callout__title">The default is a view</div>
+    <p>If you never set a materialization, dbt creates a <strong>view</strong>. That is a safe default while developing: no storage cost and the result is always current.</p>
+  </div>
+</div>
+
+<h2>The four types in detail</h2>
+
+<p>Switch between the tabs to see how each one is configured and when it earns its keep.</p>
+
+<div class="tabs">
+  <div class="tabs__list" role="tablist">
+    <button class="tab" type="button" aria-selected="true">{{icon:eye}} View</button>
+    <button class="tab" type="button">{{icon:table}} Table</button>
+    <button class="tab" type="button">{{icon:refresh-cw}} Incremental</button>
+    <button class="tab" type="button">{{icon:component}} Ephemeral</button>
+  </div>
+
+  <div class="tabs__panel">
+    <p>A view stores the query, not the data. Every read re-runs it against the upstream models, so it is always up to date and uses no storage. The trade-off is that a costly view is recomputed on every dashboard query.</p>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">models/order_counts.sql</span>
+        <span class="codeblock__lang">sql</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-sql">{{ config(materialized='view') }}
+
+select
+    customer_id,
+    count(*) as order_count
+from {{ ref('stg_orders') }}
+group by 1</code></pre>
+    </div>
+  </div>
+
+  <div class="tabs__panel">
+    <p>A table materialization drops the old object and rebuilds it from scratch on every <code>dbt run</code>. Reads are fast because the work is already done, but you pay the full compute and storage cost each time.</p>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">models/customer_orders.sql</span>
+        <span class="codeblock__lang">sql</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-sql">{{ config(materialized='table') }}
+
+select
+    c.region,
+    count(*) as total_orders,
+    sum(o.quantity * o.unit_price) as revenue
+from {{ ref('stg_orders') }} o
+join {{ ref('stg_customers') }} c
+    on o.customer_id = c.id
+group by 1</code></pre>
+    </div>
+  </div>
+
+  <div class="tabs__panel">
+    <p>An incremental model builds a table on the first run, then appends or merges only the rows you tell it to on later runs. It is the only materialization where <em>you</em> control which data is reprocessed — see the next section.</p>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">models/fct_orders.sql</span>
+        <span class="codeblock__lang">sql</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-sql">{{ config(
+    materialized='incremental',
+    unique_key='order_id'
+) }}
+
+select
+    order_id,
+    customer_id,
+    order_date,
+    quantity * unit_price as line_total
+from {{ ref('stg_orders') }}
+
+{% if is_incremental() %}
+where order_date &gt; (select max(order_date) from {{ this }})
+{% endif %}</code></pre>
+    </div>
+  </div>
+
+  <div class="tabs__panel">
+    <p>An ephemeral model never becomes an object in the warehouse. dbt compiles it into a CTE and pastes it into every model that references it. It is for tidiness, not for performance: heavy ephemeral logic is recomputed in each downstream model.</p>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">models/order_lines.sql</span>
+        <span class="codeblock__lang">sql</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-sql">{{ config(materialized='ephemeral') }}
+
+select
+    order_id,
+    customer_id,
+    quantity * unit_price as line_total
+from {{ ref('stg_orders') }}</code></pre>
+    </div>
+  </div>
+</div>
+
+<h2>Incremental models: you write the filter</h2>
+
+<p>This is the most misunderstood part of dbt, so read it twice. When a model is incremental, dbt does <strong>not</strong> automatically add a <code>WHERE order_date &gt; MAX(...)</code> clause. The <code>{% if is_incremental() %}</code> block and its filter are written by you.</p>
+
+<div class="callout callout--danger">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">dbt does not add the incremental WHERE clause for you</div>
+    <p>Setting <code>materialized='incremental'</code> only changes <em>how</em> dbt writes rows into the existing table. If you omit the filter, every run inserts the entire query result again and you get duplicates. The filter below is your responsibility.</p>
+  </div>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/fct_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{{ config(
+    materialized='incremental',
+    unique_key='order_id',
+    incremental_strategy='delete+insert'
+) }}
+
+select
+    order_id,
+    customer_id,
+    order_date,
+    quantity * unit_price as line_total
+from {{ ref('stg_orders') }}
+
+{% if is_incremental() %}
+where order_date &gt; (select max(order_date) from {{ this }})
+{% endif %}</code></pre>
+</div>
+
+<p>How the pieces fit together:</p>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">First run — full table</div><p class="step__body"><code>is_incremental()</code> is false because the model does not exist yet, so the <code>where</code> is skipped and dbt builds the whole table.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Later runs — filtered</div><p class="step__body">The table exists, so <code>is_incremental()</code> returns true, the filter is compiled in, and only rows newer than the current maximum are processed.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Merged by key</div><p class="step__body"><code>unique_key</code> tells the <code>delete+insert</code> strategy which existing rows to replace, so late updates to a known order overwrite instead of duplicate.</p></div></div>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Mind late-arriving data and full refreshes</div>
+    <p>A strict <code>&gt;</code> on <code>max(order_date)</code> misses rows that arrive later with the same or an earlier date. Many teams add a lookback window such as <code>&gt;= (select max(order_date) - interval '3 days' ...)</code>. Also remember <code>dbt run --full-refresh</code> ignores <code>is_incremental()</code> and rebuilds everything.</p>
+  </div>
+</div>
+
+<h2>Setting the materialization for a model</h2>
+
+<p>You can set it in three places. The model-level <code>config()</code> block wins, then the folder settings in <code>dbt_project.yml</code>.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">dbt_project.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">name: 'ecommerce'
+version: '1.0.0'
+profile: 'ecommerce'
+
+models:
+  ecommerce:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+      fct_orders:
+        +materialized: incremental</code></pre>
+</div>
+
+<p>The <code>+</code> prefix is required for config keys in <code>dbt_project.yml</code>. Anything set here is a default; a <code>{{ config(materialized='...') }}</code> inside the model overrides it.</p>
+
+<h2>Cost vs freshness: the real trade-off</h2>
+
+<p>Materializations are how you buy freshness with compute. Views are free to store but expensive to read; tables are expensive to build but cheap to read; incremental models pay only for the delta.</p>
+
+{{diagram:cache|Incremental builds and dbt's state tracking keep full rebuilds rare — only changed models and their children re-run.}}
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>Concern</th><th>View</th><th>Table</th><th>Incremental</th></tr></thead>
+    <tbody>
+      <tr><td>Storage cost</td><td class="cell-good">None</td><td class="cell-ok">Full table</td><td class="cell-ok">Full table</td></tr>
+      <tr><td>Build cost per run</td><td class="cell-good">None</td><td class="cell-bad">Full recompute</td><td class="cell-good">Delta only</td></tr>
+      <tr><td>Read speed</td><td class="cell-bad">Slow for heavy SQL</td><td class="cell-good">Fast</td><td class="cell-good">Fast</td></tr>
+      <tr><td>Freshness</td><td class="cell-good">Always live</td><td class="cell-ok">As of last run</td><td class="cell-ok">As of last filter</td></tr>
+      <tr><td>Complexity</td><td class="cell-good">Low</td><td class="cell-good">Low</td><td class="cell-ok">Higher — you own the filter</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">A practical rule of thumb</div>
+    <p>Start every staging model as a <strong>view</strong>. Promote a model to a <strong>table</strong> once dashboard queries get slow. Reach for <strong>incremental</strong> only when the model is genuinely large and the cost of a full rebuild hurts. Ephemeral is a packaging choice, not a performance one.</p>
+  </div>
+</div>
+
+<h2>Choosing quickly</h2>
+
+<div class="cards">
+  <div class="card reveal"><div class="card__icon">{{icon:eye}}</div><div class="card__title">Light and always current?</div><p class="card__text">Use a view. No storage, no scheduling, no stale numbers.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:table}}</div><div class="card__title">Expensive but read often?</div><p class="card__text">Use a table. Compute once per run, read cheaply all day.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:refresh-cw}}</div><div class="card__title">Huge and always growing?</div><p class="card__text">Use incremental — and write a filter that matches your data's arrival pattern.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:component}}</div><div class="card__title">Just organizing SQL?</div><p class="card__text">Use ephemeral to break up a query without creating an object.</p></div>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>The materialization decides how dbt persists a model's SQL; the default is a <strong>view</strong>.</span></li>
+  <li>{{icon:circle-check}}<span><strong>View</strong> stores no data (always fresh), <strong>table</strong> rebuilds fully (fast reads), <strong>incremental</strong> processes only the delta, <strong>ephemeral</strong> stores nothing at all.</span></li>
+  <li>{{icon:circle-check}}<span>dbt does <strong>not</strong> auto-add the incremental filter — you write <code>{% if is_incremental() %} where ... {% endif %}</code> yourself.</span></li>
+  <li>{{icon:circle-check}}<span><code>unique_key</code> and <code>incremental_strategy</code> control how new rows are merged into the existing table.</span></li>
+  <li>{{icon:circle-check}}<span>Set materializations per model with <code>config()</code> or per folder in <code>dbt_project.yml</code> using the <code>+</code> prefix.</span></li>
+  <li>{{icon:circle-check}}<span>Choose by cost and freshness: views for freshness, tables for read speed, incremental for scale.</span></li>
+</ul>
+
+<div class="quiz" data-explain="Setting materialized='incremental' does not add any filter. dbt only decides how rows are written into the existing table; the user must write the {% if is_incremental() %} WHERE clause.">
+  <div class="quiz__q">{{icon:circle-help}} <span>What happens if you set <code>materialized='incremental'</code> but never add an <code>is_incremental()</code> filter?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>dbt adds <code>WHERE order_date &gt; MAX(...)</code> automatically.</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>Every run processes the whole query and can duplicate rows.</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>dbt refuses to run the model until a filter is present.</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>You can pick how data is stored. Now stop repeating SQL: in <a href="./2-macros-jinja.html">Macros &amp; Jinja Templating</a> you'll write logic once and reuse it everywhere.</p>
+  </div>
+</div>

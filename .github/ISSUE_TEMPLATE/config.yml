@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Official dbt documentation
+    url: https://docs.getdbt.com/
+    about: Questions about dbt itself are best answered in the official docs.
+  - name: dbt Community Slack
+    url: https://www.getdbt.com/community/
+    about: Ask the dbt community for help with your own project.

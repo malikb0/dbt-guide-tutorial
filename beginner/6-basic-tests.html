@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js" data-theme="dark" data-level="beginner">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Basic Tests (NOT NULL, UNIQUE) | Beginner · dbt Tutorial</title>
+<meta name="description" content="Catch dirty data before it reaches a dashboard with dbt’s built-in generic tests.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#10b981">
+<meta name="author" content="dbt Complete Tutorial">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="dbt Complete Tutorial">
+<meta property="og:title" content="Basic Tests (NOT NULL, UNIQUE) | Beginner · dbt Tutorial">
+<meta property="og:description" content="Catch dirty data before it reaches a dashboard with dbt’s built-in generic tests.">
+<meta property="og:image" content="https://your-username.github.io/dbt-guide-tutorial/assets/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://your-username.github.io/dbt-guide-tutorial/beginner/6-basic-tests.html">
+<link rel="canonical" href="https://your-username.github.io/dbt-guide-tutorial/beginner/6-basic-tests.html">
+<link rel="license" href="https://creativecommons.org/licenses/by-nc-nd/4.0/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Basic Tests (NOT NULL, UNIQUE) | Beginner · dbt Tutorial">
+<meta name="twitter:description" content="Catch dirty data before it reaches a dashboard with dbt’s built-in generic tests.">
+<meta name="twitter:image" content="https://your-username.github.io/dbt-guide-tutorial/assets/img/og.png">
+<meta name="generator" content="dbt-tutorial-build">
+<link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="../assets/fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../assets/fonts/fonts.css">
+<link rel="stylesheet" href="../css/style.css">
+<script>(function(){var d=document.documentElement;d.classList.remove('no-js');d.classList.add('js');try{var t=localStorage.getItem('dbt-theme');if(t!=='light'&&t!=='dark'){t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}d.dataset.theme=t;}catch(e){d.dataset.theme='dark';}})();</script>
+
+</head>
+<body>
+<div hidden><svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+<symbol id="i-rocket" viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
+  <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
+  <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+  <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" /></symbol>
+<symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></symbol>
+<symbol id="i-flame" viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" /></symbol>
+<symbol id="i-crown" viewBox="0 0 24 24"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z" />
+  <path d="M5 21h14" /></symbol>
+<symbol id="i-compass" viewBox="0 0 24 24"><path d="m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z" />
+  <circle cx="12" cy="12" r="10" /></symbol>
+<symbol id="i-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z" />
+  <path d="M12 22V12" />
+  <path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7" />
+  <path d="m7.5 4.27 9 5.15" /></symbol>
+<symbol id="i-blocks" viewBox="0 0 24 24"><rect width="7" height="7" x="14" y="3" rx="1" />
+  <path d="M10 21V8a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1H3" /></symbol>
+<symbol id="i-hammer" viewBox="0 0 24 24"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9" />
+  <path d="m18 15 4-4" />
+  <path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5" /></symbol>
+<symbol id="i-sprout" viewBox="0 0 24 24"><path d="M7 20h10" />
+  <path d="M10 20c5.5-2.5.8-6.4 3-10" />
+  <path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z" />
+  <path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z" /></symbol>
+<symbol id="i-circle-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <path d="m9 12 2 2 4-4" /></symbol>
+<symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+  <path d="m3.3 7 8.7 5 8.7-5" />
+  <path d="M12 22V12" /></symbol>
+<symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z" /></symbol>
+<symbol id="i-flask-conical" viewBox="0 0 24 24"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2" />
+  <path d="M8.5 2h7" />
+  <path d="M7 16h10" /></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+  <path d="M3 3v5h5" />
+  <path d="M12 7v5l4 2" /></symbol>
+<symbol id="i-refresh-cw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+  <path d="M21 3v5h-5" />
+  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+  <path d="M8 16H3v5" /></symbol>
+<symbol id="i-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" /></symbol>
+<symbol id="i-chart-line" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16" />
+  <path d="m19 9-5 5-4-4-3 3" /></symbol>
+<symbol id="i-satellite" viewBox="0 0 24 24"><path d="M13 7 9 3 5 7l4 4" />
+  <path d="m17 11 4 4-4 4-4-4" />
+  <path d="m8 12 4 4 6-6-4-4Z" />
+  <path d="m16 8 3-3" />
+  <path d="M9 21a6 6 0 0 0-6-6" /></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+  <circle cx="12" cy="12" r="3" /></symbol>
+<symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8" />
+  <rect width="16" height="12" x="4" y="8" rx="2" />
+  <path d="M2 14h2" />
+  <path d="M20 14h2" />
+  <path d="M15 13v2" />
+  <path d="M9 13v2" /></symbol>
+<symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4" />
+  <path d="M3.34 19a10 10 0 1 1 17.32 0" /></symbol>
+<symbol id="i-dna" viewBox="0 0 24 24"><path d="m10 16 1.5 1.5" />
+  <path d="m14 8-1.5-1.5" />
+  <path d="M15 2c-1.798 1.998-2.518 3.995-2.807 5.993" />
+  <path d="m16.5 10.5 1 1" />
+  <path d="m17 6-2.891-2.891" />
+  <path d="M2 15c6.667-6 13.333 0 20-6" />
+  <path d="m20 9 .891.891" />
+  <path d="M3.109 14.109 4 15" />
+  <path d="m6.5 12.5 1 1" />
+  <path d="m7 18 2.891 2.891" />
+  <path d="M9 22c1.798-1.998 2.518-3.995 2.807-5.993" /></symbol>
+<symbol id="i-sliders-horizontal" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4" />
+  <line x1="10" x2="3" y1="4" y2="4" />
+  <line x1="21" x2="12" y1="12" y2="12" />
+  <line x1="8" x2="3" y1="12" y2="12" />
+  <line x1="21" x2="16" y1="20" y2="20" />
+  <line x1="12" x2="3" y1="20" y2="20" />
+  <line x1="14" x2="14" y1="2" y2="6" />
+  <line x1="8" x2="8" y1="10" y2="14" />
+  <line x1="16" x2="16" y1="18" y2="22" /></symbol>
+<symbol id="i-landmark" viewBox="0 0 24 24"><line x1="3" x2="21" y1="22" y2="22" />
+  <line x1="6" x2="6" y1="18" y2="11" />
+  <line x1="10" x2="10" y1="18" y2="11" />
+  <line x1="14" x2="14" y1="18" y2="11" />
+  <line x1="18" x2="18" y1="18" y2="11" />
+  <polygon points="12 2 20 7 4 7" /></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" />
+  <path d="M12 2v2" />
+  <path d="M12 20v2" />
+  <path d="m4.93 4.93 1.41 1.41" />
+  <path d="m17.66 17.66 1.41 1.41" />
+  <path d="M2 12h2" />
+  <path d="M20 12h2" />
+  <path d="m6.34 17.66-1.41 1.41" />
+  <path d="m19.07 4.93-1.41 1.41" /></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" />
+  <path d="m21 21-4.3-4.3" /></symbol>
+<symbol id="i-menu" viewBox="0 0 24 24"><line x1="4" x2="20" y1="12" y2="12" />
+  <line x1="4" x2="20" y1="6" y2="6" />
+  <line x1="4" x2="20" y1="18" y2="18" /></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18" />
+  <path d="m6 6 12 12" /></symbol>
+<symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7" />
+  <path d="M19 12H5" /></symbol>
+<symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14" />
+  <path d="m12 5 7 7-7 7" /></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <path d="M12 16v-4" />
+  <path d="M12 8h.01" /></symbol>
+<symbol id="i-triangle-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+  <path d="M12 9v4" />
+  <path d="M12 17h.01" /></symbol>
+<symbol id="i-lightbulb" viewBox="0 0 24 24"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
+  <path d="M9 18h6" />
+  <path d="M10 22h4" /></symbol>
+<symbol id="i-book-open" viewBox="0 0 24 24"><path d="M12 7v14" />
+  <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" /></symbol>
+<symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" />
+  <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" />
+  <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" /></symbol>
+<symbol id="i-terminal" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5" />
+  <line x1="12" x2="20" y1="19" y2="19" /></symbol>
+<symbol id="i-external-link" viewBox="0 0 24 24"><path d="M15 3h6v6" />
+  <path d="M10 14 21 3" />
+  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></symbol>
+<symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+<symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+<symbol id="i-circle-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+  <path d="M12 17h.01" /></symbol>
+<symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+  <path d="M20 3v4" />
+  <path d="M22 5h-4" />
+  <path d="M4 17v2" />
+  <path d="M5 18H3" /></symbol>
+<symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3" />
+  <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+  <path d="M3 12A9 3 0 0 0 21 12" /></symbol>
+<symbol id="i-table" viewBox="0 0 24 24"><path d="M12 3v18" />
+  <rect width="18" height="18" x="3" y="3" rx="2" />
+  <path d="M3 9h18" />
+  <path d="M3 15h18" /></symbol>
+<symbol id="i-git-branch" viewBox="0 0 24 24"><line x1="6" x2="6" y1="3" y2="15" />
+  <circle cx="18" cy="6" r="3" />
+  <circle cx="6" cy="18" r="3" />
+  <path d="M18 9a9 9 0 0 1-9 9" /></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3" /></symbol>
+<symbol id="i-list-checks" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4" />
+  <path d="m3 7 2 2 4-4" />
+  <path d="M13 6h8" />
+  <path d="M13 12h8" />
+  <path d="M13 18h8" /></symbol>
+<symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <circle cx="12" cy="12" r="6" />
+  <circle cx="12" cy="12" r="2" /></symbol>
+<symbol id="i-graduation-cap" viewBox="0 0 24 24"><path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
+  <path d="M22 10v6" />
+  <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" /></symbol>
+<symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3" />
+  <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" />
+  <circle cx="18" cy="5" r="3" /></symbol>
+<symbol id="i-circle-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <circle cx="12" cy="12" r="1" /></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <polyline points="12 6 12 12 16 14" /></symbol>
+<symbol id="i-star" viewBox="0 0 24 24"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" /></symbol>
+<symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+  <path d="m9 12 2 2 4-4" /></symbol>
+<symbol id="i-workflow" viewBox="0 0 24 24"><rect width="8" height="8" x="3" y="3" rx="2" />
+  <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+  <rect width="8" height="8" x="13" y="13" rx="2" /></symbol>
+<symbol id="i-rows-3" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" />
+  <path d="M21 9H3" />
+  <path d="M21 15H3" /></symbol>
+<symbol id="i-columns-3" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" />
+  <path d="M9 3v18" />
+  <path d="M15 3v18" /></symbol>
+<symbol id="i-file-code" viewBox="0 0 24 24"><path d="M10 12.5 8 15l2 2.5" />
+  <path d="m14 12.5 2 2.5-2 2.5" />
+  <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+  <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z" /></symbol>
+<symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5" />
+  <path d="M9 8V2" />
+  <path d="M15 8V2" />
+  <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" /></symbol>
+<symbol id="i-key" viewBox="0 0 24 24"><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" />
+  <path d="m21 2-9.6 9.6" />
+  <circle cx="7.5" cy="15.5" r="5.5" /></symbol>
+<symbol id="i-filter" viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></symbol>
+<symbol id="i-calendar" viewBox="0 0 24 24"><path d="M8 2v4" />
+  <path d="M16 2v4" />
+  <rect width="18" height="18" x="3" y="4" rx="2" />
+  <path d="M3 10h18" /></symbol>
+<symbol id="i-message-square" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></symbol>
+<symbol id="i-quote" viewBox="0 0 24 24"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" />
+  <path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" /></symbol>
+<symbol id="i-book-marked" viewBox="0 0 24 24"><path d="M10 2v8l3-3 3 3V2" />
+  <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" /></symbol>
+<symbol id="i-boxes" viewBox="0 0 24 24"><path d="M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z" />
+  <path d="m7 16.5-4.74-2.85" />
+  <path d="m7 16.5 5-3" />
+  <path d="M7 16.5v5.17" />
+  <path d="M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5l-5 3Z" />
+  <path d="m17 16.5-5-3" />
+  <path d="m17 16.5 4.74-2.85" />
+  <path d="M17 16.5v5.17" />
+  <path d="M7.97 4.42A2 2 0 0 0 7 6.13v4.37l5 3 5-3V6.13a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0l-3 1.8Z" />
+  <path d="M12 8 7.26 5.15" />
+  <path d="m12 8 4.74-2.85" />
+  <path d="M12 13.5V8" /></symbol>
+<symbol id="i-package-open" viewBox="0 0 24 24"><path d="M12 22v-9" />
+  <path d="M15.17 2.21a1.67 1.67 0 0 1 1.63 0L21 4.57a1.93 1.93 0 0 1 0 3.36L8.82 14.79a1.655 1.655 0 0 1-1.64 0L3 12.43a1.93 1.93 0 0 1 0-3.36z" />
+  <path d="M20 13v3.87a2.06 2.06 0 0 1-1.11 1.83l-6 3.08a1.93 1.93 0 0 1-1.78 0l-6-3.08A2.06 2.06 0 0 1 4 16.87V13" />
+  <path d="M21 12.43a1.93 1.93 0 0 0 0-3.36L8.83 2.2a1.64 1.64 0 0 0-1.63 0L3 4.57a1.93 1.93 0 0 0 0 3.36l12.18 6.86a1.636 1.636 0 0 0 1.63 0z" /></symbol>
+<symbol id="i-database-zap" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3" />
+  <path d="M3 5V19A9 3 0 0 0 15 21.84" />
+  <path d="M21 5V8" />
+  <path d="M21 12L18 17H22L19 22" />
+  <path d="M3 12A9 3 0 0 0 14.59 14.87" /></symbol>
+<symbol id="i-file-json" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+  <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+  <path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1" />
+  <path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1" /></symbol>
+<symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+  <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+  <line x1="6" x2="6.01" y1="6" y2="6" />
+  <line x1="6" x2="6.01" y1="18" y2="18" /></symbol>
+<symbol id="i-cog" viewBox="0 0 24 24"><path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" />
+  <path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+  <path d="M12 2v2" />
+  <path d="M12 22v-2" />
+  <path d="m17 20.66-1-1.73" />
+  <path d="M11 10.27 7 3.34" />
+  <path d="m20.66 17-1.73-1" />
+  <path d="m3.34 7 1.73 1" />
+  <path d="M14 12h8" />
+  <path d="M2 12h2" />
+  <path d="m20.66 7-1.73 1" />
+  <path d="m3.34 17 1.73-1" />
+  <path d="m17 3.34-1 1.73" />
+  <path d="m11 13.73-4 6.93" /></symbol>
+<symbol id="i-git-pull-request" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3" />
+  <circle cx="6" cy="6" r="3" />
+  <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+  <line x1="6" x2="6" y1="9" y2="21" /></symbol>
+<symbol id="i-circle-play" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <polygon points="10 8 16 12 10 16 10 8" /></symbol>
+<symbol id="i-chart-column" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16" />
+  <path d="M18 17V9" />
+  <path d="M13 17V5" />
+  <path d="M8 17v-3" /></symbol>
+<symbol id="i-waypoints" viewBox="0 0 24 24"><circle cx="12" cy="4.5" r="2.5" />
+  <path d="m10.2 6.3-3.9 3.9" />
+  <circle cx="4.5" cy="12" r="2.5" />
+  <path d="M7 12h10" />
+  <circle cx="19.5" cy="12" r="2.5" />
+  <path d="m13.8 17.7 3.9-3.9" />
+  <circle cx="12" cy="19.5" r="2.5" /></symbol>
+<symbol id="i-network" viewBox="0 0 24 24"><rect x="16" y="16" width="6" height="6" rx="1" />
+  <rect x="2" y="16" width="6" height="6" rx="1" />
+  <rect x="9" y="2" width="6" height="6" rx="1" />
+  <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+  <path d="M12 12V8" /></symbol>
+<symbol id="i-split" viewBox="0 0 24 24"><path d="M16 3h5v5" />
+  <path d="M8 3H3v5" />
+  <path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3" />
+  <path d="m15 9 6-6" /></symbol>
+<symbol id="i-merge" viewBox="0 0 24 24"><path d="m8 6 4-4 4 4" />
+  <path d="M12 2v10.3a4 4 0 0 1-1.172 2.872L4 22" />
+  <path d="m20 22-5-5" /></symbol>
+<symbol id="i-timer" viewBox="0 0 24 24"><line x1="10" x2="14" y1="2" y2="2" />
+  <line x1="12" x2="15" y1="14" y2="11" />
+  <circle cx="12" cy="14" r="8" /></symbol>
+<symbol id="i-git-merge" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3" />
+  <circle cx="6" cy="6" r="3" />
+  <path d="M6 21V9a9 9 0 0 0 9 9" /></symbol>
+<symbol id="i-circle-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <path d="m15 9-6 6" />
+  <path d="m9 9 6 6" /></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+  <path d="M7 11V7a5 5 0 0 1 10 0v4" /></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+  <circle cx="12" cy="12" r="3" /></symbol>
+<symbol id="i-sigma" viewBox="0 0 24 24"><path d="M18 7V5a1 1 0 0 0-1-1H6.5a.5.5 0 0 0-.4.8l4.5 6a2 2 0 0 1 0 2.4l-4.5 6a.5.5 0 0 0 .4.8H17a1 1 0 0 0 1-1v-2" /></symbol>
+<symbol id="i-percent" viewBox="0 0 24 24"><line x1="19" x2="5" y1="5" y2="19" />
+  <circle cx="6.5" cy="6.5" r="2.5" />
+  <circle cx="17.5" cy="17.5" r="2.5" /></symbol>
+<symbol id="i-wand-sparkles" viewBox="0 0 24 24"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72" />
+  <path d="m14 7 3 3" />
+  <path d="M5 6v4" />
+  <path d="M19 14v4" />
+  <path d="M10 2v2" />
+  <path d="M7 8H3" />
+  <path d="M21 16h-4" />
+  <path d="M11 3H9" /></symbol>
+<symbol id="i-microscope" viewBox="0 0 24 24"><path d="M6 18h8" />
+  <path d="M3 22h18" />
+  <path d="M14 22a7 7 0 1 0 0-14h-1" />
+  <path d="M9 14h2" />
+  <path d="M9 12a2 2 0 0 1-2-2V6h6v4a2 2 0 0 1-2 2Z" />
+  <path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3" /></symbol>
+<symbol id="i-git-compare" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3" />
+  <circle cx="6" cy="6" r="3" />
+  <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+  <path d="M11 18H8a2 2 0 0 1-2-2V9" /></symbol>
+<symbol id="i-file-check" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+  <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+  <path d="m9 15 2 2 4-4" /></symbol>
+<symbol id="i-table-properties" viewBox="0 0 24 24"><path d="M15 3v18" />
+  <rect width="18" height="18" x="3" y="3" rx="2" />
+  <path d="M21 9H3" />
+  <path d="M21 15H3" /></symbol>
+<symbol id="i-braces" viewBox="0 0 24 24"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1" />
+  <path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1" /></symbol>
+<symbol id="i-binary" viewBox="0 0 24 24"><rect x="14" y="14" width="4" height="6" rx="2" />
+  <rect x="6" y="4" width="4" height="6" rx="2" />
+  <path d="M6 20h4" />
+  <path d="M14 10h4" />
+  <path d="M6 14h2v6" />
+  <path d="M14 4h2v6" /></symbol>
+<symbol id="i-scan-line" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2" />
+  <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+  <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+  <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+  <path d="M7 12h10" /></symbol>
+<symbol id="i-list-tree" viewBox="0 0 24 24"><path d="M21 12h-8" />
+  <path d="M21 6H8" />
+  <path d="M21 18h-8" />
+  <path d="M3 6v4c0 1.1.9 2 2 2h3" />
+  <path d="M3 10v6c0 1.1.9 2 2 2h3" /></symbol>
+<symbol id="i-folder-tree" viewBox="0 0 24 24"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z" />
+  <path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z" />
+  <path d="M3 5a2 2 0 0 0 2 2h3" />
+  <path d="M3 3v13a2 2 0 0 0 2 2h3" /></symbol>
+<symbol id="i-square-stack" viewBox="0 0 24 24"><path d="M4 10c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h4c1.1 0 2 .9 2 2" />
+  <path d="M10 16c-1.1 0-2-.9-2-2v-4c0-1.1.9-2 2-2h4c1.1 0 2 .9 2 2" />
+  <rect width="8" height="8" x="14" y="14" rx="2" /></symbol>
+<symbol id="i-component" viewBox="0 0 24 24"><path d="M15.536 11.293a1 1 0 0 0 0 1.414l2.376 2.377a1 1 0 0 0 1.414 0l2.377-2.377a1 1 0 0 0 0-1.414l-2.377-2.377a1 1 0 0 0-1.414 0z" />
+  <path d="M2.297 11.293a1 1 0 0 0 0 1.414l2.377 2.377a1 1 0 0 0 1.414 0l2.377-2.377a1 1 0 0 0 0-1.414L6.088 8.916a1 1 0 0 0-1.414 0z" />
+  <path d="M8.916 17.912a1 1 0 0 0 0 1.415l2.377 2.376a1 1 0 0 0 1.414 0l2.377-2.376a1 1 0 0 0 0-1.415l-2.377-2.376a1 1 0 0 0-1.414 0z" />
+  <path d="M8.916 4.674a1 1 0 0 0 0 1.414l2.377 2.376a1 1 0 0 0 1.414 0l2.377-2.376a1 1 0 0 0 0-1.414l-2.377-2.377a1 1 0 0 0-1.414 0z" /></symbol>
+<symbol id="i-pickaxe" viewBox="0 0 24 24"><path d="M14.531 12.469 6.619 20.38a1 1 0 1 1-3-3l7.912-7.912" />
+  <path d="M15.686 4.314A12.5 12.5 0 0 0 5.461 2.958 1 1 0 0 0 5.58 4.71a22 22 0 0 1 6.318 3.393" />
+  <path d="M17.7 3.7a1 1 0 0 0-1.4 0l-4.6 4.6a1 1 0 0 0 0 1.4l2.6 2.6a1 1 0 0 0 1.4 0l4.6-4.6a1 1 0 0 0 0-1.4z" />
+  <path d="M19.686 8.314a12.501 12.501 0 0 1 1.356 10.225 1 1 0 0 1-1.751-.119 22 22 0 0 0-3.393-6.319" /></symbol>
+<symbol id="i-trophy" viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+  <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+  <path d="M4 22h16" />
+  <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+  <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+  <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" /></symbol>
+<symbol id="i-medal" viewBox="0 0 24 24"><path d="M7.21 15 2.66 7.14a2 2 0 0 1 .13-2.2L4.4 2.8A2 2 0 0 1 6 2h12a2 2 0 0 1 1.6.8l1.6 2.14a2 2 0 0 1 .14 2.2L16.79 15" />
+  <path d="M11 12 5.12 2.2" />
+  <path d="m13 12 5.88-9.8" />
+  <path d="M8 7h8" />
+  <circle cx="12" cy="17" r="5" />
+  <path d="M12 18v-2h-.5" /></symbol>
+<symbol id="i-award" viewBox="0 0 24 24"><path d="m15.477 12.89 1.515 8.526a.5.5 0 0 1-.81.47l-3.58-2.687a1 1 0 0 0-1.197 0l-3.586 2.686a.5.5 0 0 1-.81-.469l1.514-8.526" />
+  <circle cx="12" cy="8" r="6" /></symbol>
+</svg>
+</div>
+<a class="skiplink" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="../index.html">
+      <span class="brand__mark"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-git-branch"></use></svg></span>
+      <span class="brand__text">dbt <b>Tutorial</b></span>
+    </a>
+    <nav class="site-nav" aria-label="Levels">
+      <a href="../index.html"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-layers"></use></svg>Home</a>
+        <a href="../beginner/index.html" aria-current="true"><span class="dot" style="color:#10b981"></span>Beginner</a>
+        <a href="../intermediate/index.html"><span class="dot" style="color:#f59e0b"></span>Intermediate</a>
+        <a href="../advanced/index.html"><span class="dot" style="color:#ef4444"></span>Advanced</a>
+        <a href="../expert/index.html"><span class="dot" style="color:#7c3aed"></span>Expert</a>
+    </nav>
+    <div class="header-actions">
+      <button class="search-trigger" type="button" aria-label="Search topics">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"></use></svg><span>Search topics…</span><span class="kbd">Ctrl K</span>
+      </button>
+      <div class="progress-ring" role="img" aria-label="Overall progress">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <circle class="track" cx="20" cy="20" r="16" fill="none" stroke-width="3"></circle>
+          <circle class="bar" cx="20" cy="20" r="16" fill="none" stroke-width="3" stroke-dasharray="100" stroke-dashoffset="100"></circle>
+        </svg>
+        <span class="pct">0%</span>
+      </div>
+      <button class="icon-btn theme-toggle" type="button" aria-label="Toggle theme">
+        <svg class="icon" data-icon="sun" aria-hidden="true"><use href="#i-sun"></use></svg>
+        <svg class="icon" data-icon="moon" aria-hidden="true" style="display:none"><use href="#i-moon"></use></svg>
+      </button>
+      <button class="icon-btn nav-toggle" type="button" aria-label="Menu" aria-expanded="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-menu"></use></svg></button>
+    </div>
+  </div>
+</header>
+<nav class="mobile-nav" aria-label="Mobile">
+  <a href="../index.html"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-layers"></use></svg>Home</a>
+        <a href="../beginner/index.html" aria-current="true"><span class="dot" style="color:#10b981"></span>Beginner</a>
+        <a href="../intermediate/index.html"><span class="dot" style="color:#f59e0b"></span>Intermediate</a>
+        <a href="../advanced/index.html"><span class="dot" style="color:#ef4444"></span>Advanced</a>
+        <a href="../expert/index.html"><span class="dot" style="color:#7c3aed"></span>Expert</a>
+</nav>
+<section class="hero">
+  <div class="wrap">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="../index.html">Home</a><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-right"></use></svg>
+      <a href="./index.html">Beginner</a><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-chevron-right"></use></svg>
+      <span>Basic Tests</span>
+    </nav>
+    <div class="hero__eyebrow" style="margin-top:1rem"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-check"></use></svg> Beginner · Topic 6 of 6</div>
+    <h1 class="hero__title">Basic Tests (NOT NULL, UNIQUE)</h1>
+    <p class="hero__lede">Catch dirty data before it reaches a dashboard with dbt’s built-in generic tests.</p>
+    <div class="hero__meta">
+      <span><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-clock"></use></svg> 15 min</span>
+      <span><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-target"></use></svg> 3 skills</span>
+      <span class="chip"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-table-properties"></use></svg>tests</span><span class="chip"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-table-properties"></use></svg>data-quality</span>
+    </div>
+    <div class="hero__cta">
+      <button class="btn btn--ghost markdone" data-key="beginner/6-basic-tests" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-circle-check"></use></svg><span data-label>Mark as complete</span></button>
+      <a class="btn btn--primary" href="#where-tests-attach"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-book-open"></use></svg>Start reading</a>
+    </div>
+  </div>
+</section>
+<div class="shell">
+      <aside class="toc-rail">
+    <nav class="toc" aria-label="On this page">
+      <div class="toc__title"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-list-tree"></use></svg> On this page</div>
+      <ul class="toc__list"><li><a class="" href="#where-tests-attach">Where tests attach</a></li><li><a class="" href="#the-four-generic-tests">The four generic tests</a></li><li><a class="" href="#add-tests-in-yaml">Add tests in YAML</a></li><li><a class="" href="#run-the-tests">Run the tests</a></li><li><a class="" href="#what-dbt-runs-under-the-hood">What dbt runs under the hood</a></li><li><a class="" href="#read-a-failure-and-fix-it">Read a failure and fix it</a></li><li><a class="" href="#run-test-or-build">run, test or build?</a></li><li><a class="" href="#key-takeaways">Key takeaways</a></li></ul>
+      <div class="toc__progress">
+        <div class="label"><span>Your progress</span><span class="count"></span></div>
+        <div class="bar"><span style="width:0"></span></div>
+      </div>
+    </nav>
+  </aside>
+      <main id="main" class="prose"><p class="lead">A dashboard built on untested data is a confident lie. dbt makes testing part of the normal workflow: declare a rule next to a column, run <code>dbt test</code>, and the build fails the moment the data stops obeying it. This lesson covers the four built-in generic tests and how to read a failure.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-shield-check"></use></svg></div>
+  <div>
+    <div class="callout__title">Tests are assertions, not dashboards</div>
+    <p>Each test compiles to a query that returns the rows which <em>break</em> the rule. No rows returned means the test passes. That is the whole idea — and it is why a test can fail loudly without any extra tooling.</p>
+  </div>
+</div>
+
+<h2 id="where-tests-attach">Where tests attach <a class="heading-anchor" href="#where-tests-attach" aria-label="Link to this section">#</a></h2>
+
+<p>A test attaches to a model and, usually, to one of its columns. You declare it in YAML beside the model, so the rule lives in version control with the code it protects.</p>
+
+<figure class="diagram">
+  <div class="diagram__frame">
+    <svg viewBox="0 0 760 300" role="img" aria-label="first-model diagram" preserveAspectRatio="xMidYMid meet"><defs>
+    <marker id="arr-first-model" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--border-2)"/>
+    </marker>
+    <marker id="arr-first-model-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+    </marker>
+  </defs><g>
+    <rect class="dg-node dg-node--source" x="30" y="60" width="170" height="60" rx="12"/>
+    <use href="#i-database" x="43" y="81" width="18" height="18" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="dg-label" x="72" y="89" text-anchor="start" dominant-baseline="middle">ecommerce.orders</text>
+    <text class="dg-sub" x="72" y="105" text-anchor="start" dominant-baseline="middle">source</text>
+  </g><g>
+    <rect class="dg-node dg-node--accent" x="300" y="60" width="170" height="60" rx="12"/>
+    <use href="#i-hammer" x="313" y="81" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="dg-label" x="342" y="89" text-anchor="start" dominant-baseline="middle">first_orders</text>
+    <text class="dg-sub" x="342" y="105" text-anchor="start" dominant-baseline="middle">models/first_orders.sql</text>
+  </g><g>
+    <rect class="dg-node" x="300" y="200" width="170" height="60" rx="12"/>
+    <use href="#i-chart-column" x="313" y="221" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="dg-label" x="342" y="229" text-anchor="start" dominant-baseline="middle">order_summary</text>
+    <text class="dg-sub" x="342" y="245" text-anchor="start" dominant-baseline="middle">models/order_summary.sql</text>
+  </g><g>
+    <rect class="dg-node dg-node--out" x="560" y="200" width="170" height="60" rx="12"/>
+    <use href="#i-chart-line" x="573" y="221" width="18" height="18" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="dg-label" x="602" y="229" text-anchor="start" dominant-baseline="middle">mart_revenue</text>
+    <text class="dg-sub" x="602" y="245" text-anchor="start" dominant-baseline="middle">downstream</text>
+  </g><path class="dg-edge dg-edge--accent" d="M200,90 L300,90" marker-end="url(#arr-first-model-a)"/><path class="dg-edge dg-edge--accent" d="M385,120 L385,200" marker-end="url(#arr-first-model-a)"/><path class="dg-edge dg-edge--accent" d="M470,230 L560,230" marker-end="url(#arr-first-model-a)"/><text class="dg-sub" x="240" y="80" text-anchor="middle" font-size="10">source()</text><text class="dg-sub" x="412" y="165" text-anchor="start" font-size="10">ref()</text></svg>
+  </div>
+  <figcaption class="diagram__caption">One source feeds the first model; ref() makes downstream models depend on it.</figcaption>
+</figure>
+
+<h2 id="the-four-generic-tests">The four generic tests <a class="heading-anchor" href="#the-four-generic-tests" aria-label="Link to this section">#</a></h2>
+
+<p>dbt ships four generic tests out of the box. Most data-quality rules you need at the start are combinations of these.</p>
+
+<figure class="diagram">
+  <div class="diagram__frame">
+    <svg viewBox="0 0 760 280" role="img" aria-label="tests diagram" preserveAspectRatio="xMidYMid meet"><defs>
+    <marker id="arr-tests" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--border-2)"/>
+    </marker>
+    <marker id="arr-tests-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+    </marker>
+  </defs><g>
+    <rect class="dg-node" x="30" y="120" width="150" height="64" rx="12"/>
+    <use href="#i-layers" x="43" y="143" width="18" height="18" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="dg-label" x="72" y="151" text-anchor="start" dominant-baseline="middle">stg_orders</text>
+    <text class="dg-sub" x="72" y="167" text-anchor="start" dominant-baseline="middle">a model</text>
+  </g><g>
+    <rect class="dg-node" x="290" y="45" width="170" height="46" rx="12"/>
+    <use href="#i-circle-check" x="303" y="59" width="18" height="18" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="dg-label" x="332" y="67" text-anchor="start" dominant-baseline="middle">unique(order_id)</text>
+    <text class="dg-sub" x="332" y="83" text-anchor="start" dominant-baseline="middle">generic test</text>
+  </g><g>
+    <rect class="dg-node" x="290" y="120" width="170" height="46" rx="12"/>
+    <use href="#i-circle-check" x="303" y="134" width="18" height="18" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="dg-label" x="332" y="142" text-anchor="start" dominant-baseline="middle">not_null(id)</text>
+    <text class="dg-sub" x="332" y="158" text-anchor="start" dominant-baseline="middle">generic test</text>
+  </g><g>
+    <rect class="dg-node" x="290" y="195" width="170" height="46" rx="12"/>
+    <use href="#i-git-compare" x="303" y="209" width="18" height="18" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="dg-label" x="332" y="217" text-anchor="start" dominant-baseline="middle">relationships(id)</text>
+    <text class="dg-sub" x="332" y="233" text-anchor="start" dominant-baseline="middle">dbt_utils</text>
+  </g><g>
+    <rect class="dg-node dg-node--out" x="580" y="120" width="150" height="64" rx="12"/>
+    <use href="#i-chart-column" x="593" y="143" width="18" height="18" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="dg-label" x="622" y="151" text-anchor="start" dominant-baseline="middle">fct_orders</text>
+    <text class="dg-sub" x="622" y="167" text-anchor="start" dominant-baseline="middle">trusted mart</text>
+  </g><path class="dg-edge" d="M180,152 C230,152 240,68 290,68" marker-end="url(#arr-tests)"/><path class="dg-edge dg-edge--accent" d="M180,152 L290,143" marker-end="url(#arr-tests-a)"/><path class="dg-edge" d="M180,152 C230,152 240,218 290,218" marker-end="url(#arr-tests)"/><path class="dg-edge dg-edge--accent" d="M460,143 L580,152" marker-end="url(#arr-tests-a)"/><text class="dg-sub" x="520" y="135" text-anchor="middle" font-size="10">all pass →</text><text class="dg-sub" x="520" y="180" text-anchor="middle" font-size="10" fill="#fb7185">fail → stop</text></svg>
+  </div>
+  <figcaption class="diagram__caption">Tests guard each model: only passing data flows to the mart.</figcaption>
+</figure>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Test</th><th>Rule</th><th>Typical use</th></tr></thead>
+  <tbody>
+    <tr><td><code>not_null</code></td><td>The column has no nulls</td><td>Primary keys and required fields</td></tr>
+    <tr><td><code>unique</code></td><td>Each value appears once</td><td>Primary keys, emails, SKUs</td></tr>
+    <tr><td><code>accepted_values</code></td><td>Every value is in an allowed list</td><td>Status and category columns</td></tr>
+    <tr class="highlight"><td><code>relationships</code></td><td>Every value exists in another model's column</td><td>Foreign keys, referential integrity</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout callout--info">
+  <div class="callout__icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-info"></use></svg></div>
+  <div>
+    <div class="callout__title">Advanced tests come from packages</div>
+    <p>Anything beyond these four — like <code>unique_combination_of_columns</code> — comes from the <code>dbt_utils</code> package. Add it to <code>packages.yml</code> and run <code>dbt deps</code> to install it. We cover that in the intermediate track.</p>
+  </div>
+</div>
+
+<h2 id="add-tests-in-yaml">Add tests in YAML <a class="heading-anchor" href="#add-tests-in-yaml" aria-label="Link to this section">#</a></h2>
+
+<p>Declare tests under each column in a <code>_models.yml</code> file. The example below uses all four built-ins.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_models.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-copy"></use></svg> <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+models:
+  - name: first_orders
+    description: "Completed orders with customer details and a line total."
+    columns:
+      - name: order_id
+        description: "Unique order identifier"
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              to: source('ecommerce', 'orders')
+              field: order_id
+
+      - name: customer_id
+        description: "FK to the customers table"
+        tests:
+          - not_null
+
+      - name: order_status
+        description: "Order lifecycle status"
+        tests:
+          - accepted_values:
+              values: ['completed', 'pending', 'returned']</code></pre>
+</div>
+
+<h2 id="run-the-tests">Run the tests <a class="heading-anchor" href="#run-the-tests" aria-label="Link to this section">#</a></h2>
+
+<p><code>dbt test</code> runs every test in the project. Use <code>--select</code> to narrow the run while you iterate.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-copy"></use></svg> <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt test                              # every test
+dbt test --select first_orders        # only this model's tests
+dbt test --select source:ecommerce    # tests declared on sources</code></pre>
+</div>
+
+<div class="tryit"><div class="tryit__head"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-terminal"></use></svg> Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-copy"></use></svg> <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">dbt test --select first_orders</code></pre>
+    </div>
+    <p>Expected: a line per test, each marked <code>PASS</code>, ending with <code>Done. PASS=5 WARN=0 ERROR=0 SKIP=0</code>. A <code>FAIL</code> means the test found rows that break the rule.</p>
+  </div>
+</div>
+
+<h2 id="what-dbt-runs-under-the-hood">What dbt runs under the hood <a class="heading-anchor" href="#what-dbt-runs-under-the-hood" aria-label="Link to this section">#</a></h2>
+
+<p>Generic tests are just macros that emit SQL. Knowing the shape of that SQL makes failures easy to interpret.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">generated test SQL</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-copy"></use></svg> <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">-- not_null(order_id): any row here is a failure
+select *
+from "ecommerce"."main"."first_orders"
+where order_id is null
+
+-- unique(order_id): any row here is a failure
+select
+    order_id,
+    count(*) as n_records
+from "ecommerce"."main"."first_orders"
+group by order_id
+having count(*) &gt; 1</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"></use></svg></div>
+  <div>
+    <div class="callout__title">The old page had these backwards</div>
+    <p><code>not_null</code> does <em>not</em> group and count; it simply selects rows where the column is null. <code>unique</code> is the one that groups and uses <code>having count(*) &gt; 1</code>. Reading the compiled query in <code>target/compiled/</code> shows exactly which rule fired.</p>
+  </div>
+</div>
+
+<h2 id="read-a-failure-and-fix-it">Read a failure and fix it <a class="heading-anchor" href="#read-a-failure-and-fix-it" aria-label="Link to this section">#</a></h2>
+
+<p>Suppose two orders share the same <code>order_id</code>. The <code>unique</code> test returns those two rows, so dbt reports a failure and names the test.</p>
+
+<div class="table-wrap"><table class="table--zebra">
+  <thead><tr><th>Test</th><th>Model</th><th>Column</th><th>Result</th><th>What it means</th></tr></thead>
+  <tbody>
+    <tr><td>not_null</td><td>first_orders</td><td>order_id</td><td class="cell-good">PASS</td><td>No null identifiers</td></tr>
+    <tr><td>unique</td><td>first_orders</td><td>order_id</td><td class="cell-bad">FAIL</td><td>2 rows share an order_id</td></tr>
+    <tr><td>accepted_values</td><td>first_orders</td><td>order_status</td><td class="cell-good">PASS</td><td>Only allowed statuses present</td></tr>
+    <tr><td>relationships</td><td>first_orders</td><td>order_id</td><td class="cell-good">PASS</td><td>Every key exists upstream</td></tr>
+  </tbody>
+</table></div>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Read the failing query</div><p class="step__body">dbt prints how many rows it found. Open the compiled test in <code>target/compiled/</code> to see the exact rule.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">See the offending rows</div><p class="step__body">Run <code>dbt test --select first_orders --store-failures</code>. dbt writes the failing rows to a table so you can query them directly.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Fix the model, not the test</div><p class="step__body">Add a deduplication or filter to the model, re-run <code>dbt build</code>, and confirm the test now passes. Only weaken a test if the business rule genuinely changed.</p></div></div>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-triangle-alert"></use></svg></div>
+  <div>
+    <div class="callout__title">Do not silence a test to make the build green</div>
+    <p>A failing test is information. Deleting it hides the problem and erodes trust in every other test. Fix the data or deliberately update the assertion — and say why in the pull request.</p>
+  </div>
+</div>
+
+<h2 id="run-test-or-build">run, test or build? <a class="heading-anchor" href="#run-test-or-build" aria-label="Link to this section">#</a></h2>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>dbt run</code></td><td>Builds models only — no tests, no seeds</td></tr>
+    <tr><td><code>dbt test</code></td><td>Runs tests only, against whatever is already built</td></tr>
+    <tr><td><code>dbt seed</code></td><td>Loads CSV seeds only</td></tr>
+    <tr class="highlight"><td><code>dbt build</code></td><td>Runs seeds, models, snapshots and tests together, in DAG order</td></tr>
+  </tbody>
+</table></div>
+
+<p><code>dbt build</code> is the command to reach for in production and CI: it interleaves each model with its tests, so a broken model fails before its downstream dependencies ever run.</p>
+
+<h2 id="key-takeaways">Key takeaways <a class="heading-anchor" href="#key-takeaways" aria-label="Link to this section">#</a></h2>
+
+<ul class="checklist">
+  <li><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-circle-check"></use></svg><span>dbt ships four generic tests: <code>not_null</code>, <code>unique</code>, <code>accepted_values</code> and <code>relationships</code>.</span></li>
+  <li><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-circle-check"></use></svg><span>Declare tests under each column in <code>_models.yml</code>; they live in Git with the model.</span></li>
+  <li><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-circle-check"></use></svg><span>A test passes when its query returns zero rows; any returned row is a failure.</span></li>
+  <li><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-circle-check"></use></svg><span><code>dbt test --store-failures</code> writes the offending rows to a table so you can inspect them.</span></li>
+  <li><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-circle-check"></use></svg><span><code>dbt build</code> runs seeds, models, snapshots and tests in DAG order — the safest default.</span></li>
+</ul>
+
+<div class="quiz" data-explain="unique_combination_of_columns is not built into dbt; it ships with the dbt_utils package, installed via packages.yml and dbt deps.">
+  <div class="quiz__q"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-circle-help"></use></svg> <span>Which of these tests comes from the <code>dbt_utils</code> package rather than dbt itself?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span><code>relationships</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">B</span><span><code>accepted_values</code></span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">C</span><span><code>unique_combination_of_columns</code></span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-graduation-cap"></use></svg></div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>That is the beginner track complete. Head back to the <a href="./index.html">Foundations hub</a> to review the path, or move on to the Intermediate level for materializations, macros and snapshots.</p>
+  </div>
+</div>
+<nav class="pager" aria-label="Topic navigation"><a class="pager__link pager__link--prev" href="../beginner/5-seeds-and-sources.html">
+      <span class="dir"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-arrow-left"></use></svg>Previous</span>
+      <span class="t">Seeds &amp; Sources Explained</span></a><span></span></nav></main>
+    </div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-col footer-brand">
+        <a class="brand" href="../index.html"><span class="brand__mark"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-git-branch"></use></svg></span><span class="brand__text">dbt <b>Tutorial</b></span></a>
+        <p>A visual, hands-on guide to dbt: models, sources, tests, macros, snapshots, incremental builds, CI/CD and production patterns. Built with DuckDB.</p>
+      </div>
+      <div class="footer-col"><h4>Levels</h4><a href="../beginner/index.html">Beginner — Foundations</a><a href="../intermediate/index.html">Intermediate — Level Up</a><a href="../advanced/index.html">Advanced — Go Deep</a><a href="../expert/index.html">Expert — Master Class</a></div>
+      <div class="footer-col"><h4>Official docs</h4>
+        <a href="https://github.com/dbt-labs/dbt-core" target="_blank" rel="noopener">dbt-core on GitHub <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-external-link"></use></svg></a>
+        <a href="https://docs.getdbt.com/" target="_blank" rel="noopener">docs.getdbt.com <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-external-link"></use></svg></a>
+        <a href="https://duckdb.org/docs/" target="_blank" rel="noopener">DuckDB docs <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-external-link"></use></svg></a>
+        <a href="https://hub.getdbt.com/" target="_blank" rel="noopener">dbt package hub <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-external-link"></use></svg></a>
+      </div>
+      <div class="footer-col"><h4>This guide</h4>
+        <a href="../index.html">All topics</a>
+        <a href="../index.html#quick-jump">Quick jump table</a>
+        <a href="../beginner/1-intro.html">Start from scratch</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 dbt Complete Tutorial · 21 topics · 8 h of material</span>
+      <span>Content <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noopener">CC BY-NC-ND 4.0</a> · Code MIT</span>
+      <span>Built with <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-database"></use></svg> DuckDB · dbt 1.8+</span>
+    </div>
+  </div>
+</footer>
+<dialog class="search-dialog" aria-label="Search">
+  <div class="search-panel">
+    <div class="search-field">
+      <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"></use></svg>
+      <input type="search" placeholder="Search 21 topics — try 'incremental' or 'snapshot'" aria-label="Search topics">
+      <span class="kbd">Esc</span>
+    </div>
+    <div class="search-results"></div>
+  </div>
+</dialog>
+<script src="../assets/js/topics.js"></script>
+<script src="../assets/js/vendor/prism-bundle.js" defer></script>
+<script src="../assets/js/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,266 @@
+<p class="lead">Time to ship something. In this lesson you will write a model, compile it to see the real SQL dbt generates, run it against DuckDB, inspect the resulting table, and add your first test. Every command is real and every file is one you can keep.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:target}}</div>
+  <div>
+    <div class="callout__title">The goal</div>
+    <p>Build <code>first_orders</code> — a clean order table that joins raw orders to raw customers, keeps only completed orders, and computes a line total. Then prove it works with a test.</p>
+  </div>
+</div>
+
+<h2>What you are building</h2>
+
+<p>The model reads two sources and produces one table. dbt figures out that it must read the sources before it can build the model — that ordering is the DAG.</p>
+
+{{diagram:first-model|first_orders() sits between the ecommerce source and everything that will use it downstream.}}
+
+<div class="flow">
+  <span class="flow__node">{{icon:satellite}}source('ecommerce', 'orders')</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:hammer}}models/first_orders.sql</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:table}}main.first_orders</span>
+</div>
+
+<h2>Step 1 — Check your setup</h2>
+
+<p>From inside the project directory, confirm dbt can reach DuckDB before you write anything.</p>
+
+<div class="tryit"><div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">cd ~/projects/ecommerce_analytics
+dbt debug</code></pre>
+    </div>
+    <p>Expected: <code>All checks passed!</code> If not, revisit <a href="./2-installation.html">Setup &amp; Installation</a>.</p>
+  </div>
+</div>
+
+<h2>Step 2 — Write the model</h2>
+
+<p>Create a file at <code>models/first_orders.sql</code>. It contains exactly one <code>SELECT</code>, nothing else.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/first_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">-- Join raw orders to raw customers and keep only completed orders.
+select
+    o.order_id,
+    o.customer_id,
+    c.name                                as customer_name,
+    o.product_sku,
+    o.quantity,
+    o.unit_price,
+    o.quantity * o.unit_price             as line_total,
+    cast(o.order_date as date)            as order_day
+from {{ source('ecommerce', 'orders') }} as o
+left join {{ source('ecommerce', 'customers') }} as c
+    on o.customer_id = c.id
+where o.status = 'completed'</code></pre>
+</div>
+
+<p>Three things are worth noticing:</p>
+
+<ul class="list-custom">
+  <li><code>{{ source('ecommerce', 'orders') }}</code> tells dbt which declared source table to read.</li>
+  <li>Aliases keep the join readable, and the calculation lives in the model rather than in a dashboard.</li>
+  <li>There is no <code>CREATE</code> statement — dbt writes that part for you.</li>
+</ul>
+
+<h2>Step 3 — Compile before you run</h2>
+
+<p><code>dbt compile</code> renders the Jinja and resolves every reference, but touches no data. It is the fastest way to see what dbt will actually execute.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt compile
+
+# The rendered SQL lands under target/
+cat target/compiled/ecommerce_analytics/models/first_orders.sql</code></pre>
+</div>
+
+<p>With <code>source('ecommerce', 'orders')</code> resolved, the compiled file looks like this (the catalog prefix comes from your DuckDB file name):</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">target/compiled/…/first_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    o.order_id,
+    o.customer_id,
+    c.name                     as customer_name,
+    o.product_sku,
+    o.quantity,
+    o.unit_price,
+    o.quantity * o.unit_price  as line_total,
+    cast(o.order_date as date) as order_day
+from "ecommerce"."main"."orders" as o
+left join "ecommerce"."main"."customers" as c
+    on o.customer_id = c.id
+where o.status = 'completed'</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:search}}</div>
+  <div>
+    <div class="callout__title">Compile is your debugger</div>
+    <p>When a model errors, open its compiled file first. Nine times out of ten the problem is a Jinja reference that resolved to something other than what you expected.</p>
+  </div>
+</div>
+
+<h2>Step 4 — Run the model</h2>
+
+<p>Now let dbt execute the compiled SQL against DuckDB. <code>--select</code> limits the run to one model while you iterate.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># Build just this model
+dbt run --select first_orders</code></pre>
+</div>
+
+<p>Expected output ends with a summary such as <code>Completed successfully</code> and <code>Done. PASS=1 WARN=0 ERROR=0</code>. The first run also creates the <code>ecommerce.duckdb</code> file and the <code>main</code> schema.</p>
+
+<h2>Step 5 — Inspect the output table</h2>
+
+<p>Open the database with the DuckDB CLI and query what dbt built. Models land in the <code>main</code> schema by default.</p>
+
+<div class="tryit"><div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">duckdb ecommerce.duckdb
+select * from main.first_orders order by order_id;</code></pre>
+    </div>
+    <p>You should see one row per completed order, with a computed <code>line_total</code> and a clean <code>order_day</code>.</p>
+  </div>
+</div>
+
+<div class="table-wrap"><table class="table--zebra">
+  <thead><tr><th>order_id</th><th>customer_name</th><th>product_sku</th><th>quantity</th><th>unit_price</th><th>line_total</th><th>order_day</th></tr></thead>
+  <tbody>
+    <tr><td>O01</td><td>Alice Chen</td><td>P-LAPTOP-01</td><td>2</td><td>899.99</td><td class="cell-good">1799.98</td><td>2024-01-20</td></tr>
+    <tr><td>O03</td><td>Alice Chen</td><td>P-DESK-01</td><td>1</td><td>249.99</td><td class="cell-good">249.99</td><td>2024-03-08</td></tr>
+    <tr><td>O05</td><td>Diana Ross</td><td>P-LAPTOP-01</td><td>1</td><td>899.99</td><td class="cell-good">899.99</td><td>2024-04-01</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Step 6 — Make it a physical table</h2>
+
+<p>New models default to a <code>view</code>. Add a <code>config()</code> block at the top of the file to store <code>first_orders</code> as a table instead. This is how you control each model's materialization.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/first_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{{ config(materialized='table') }}
+
+select
+    o.order_id,
+    -- … the rest of the query from step 2 …
+from {{ source('ecommerce', 'orders') }} as o</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">The key is <code>materialized</code></div>
+    <p>The old guide wrote <code>materialization='table'</code>, which dbt ignores. The correct config is <code>materialized='table'</code> — same word you use in <code>dbt_project.yml</code> as <code>+materialized</code>.</p>
+  </div>
+</div>
+
+<h2>Step 7 — Add your first test</h2>
+
+<p>A table without tests is a rumour. Declare two generic tests on <code>order_id</code> in a YAML file next to the model, then run <code>dbt test</code>. Tests pass when they return zero rows.</p>
+
+{{diagram:tests|Tests sit between a model and its consumers: if a rule breaks, the build stops before bad data spreads.}}
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_models.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+models:
+  - name: first_orders
+    description: "Completed orders with customer details and a line total."
+    columns:
+      - name: order_id
+        description: "Unique identifier for each order"
+        tests:
+          - not_null
+          - unique</code></pre>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt test --select first_orders</code></pre>
+</div>
+
+<p>Expected: two passing tests and a summary ending <code>PASS=2 WARN=0 ERROR=0</code>. From now on, <code>dbt build --select first_orders</code> runs the model and its tests together, in order.</p>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>A model is one <code>SELECT</code>; dbt generates the <code>CREATE</code> statement.</span></li>
+  <li>{{icon:circle-check}}<span><code>dbt compile</code> renders Jinja and resolves references without touching data — use it to debug.</span></li>
+  <li>{{icon:circle-check}}<span><code>dbt run --select first_orders</code> executes the model; output lands in the <code>main</code> schema of your DuckDB file.</span></li>
+  <li>{{icon:circle-check}}<span><code>{{ config(materialized='table') }}</code> controls whether a model is a view or a table.</span></li>
+  <li>{{icon:circle-check}}<span>Declare <code>not_null</code> and <code>unique</code> in <code>_models.yml</code> and run them with <code>dbt test</code>.</span></li>
+</ul>
+
+<div class="quiz" data-explain="dbt compile only renders the Jinja and produces the SQL; it does not execute anything against the warehouse.">
+  <div class="quiz__q">{{icon:circle-help}} <span>Which command shows the SQL dbt will run without executing it?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span><code>dbt run</code></span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span><code>dbt compile</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span><code>dbt test</code></span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>You can transform data. Next, <a href="./5-seeds-and-sources.html">Seeds &amp; Sources</a> shows how to bring small reference CSVs and raw warehouse tables into the project properly.</p>
+  </div>
+</div>

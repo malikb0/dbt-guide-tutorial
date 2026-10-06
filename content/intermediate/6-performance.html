@@ -1,0 +1,171 @@
+<p class="lead">You will often hear that “dbt caches your models.” That phrasing is convenient and misleading. dbt has no result cache that silently returns yesterday’s answer. What it actually has is a record of the last build — the <strong>state</strong> — plus materializations that persist data, so it can rebuild only what changed and process only new rows. Understand those two ideas and you understand most dbt performance work.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">What “caching” really means in dbt</div>
+    <p>Two distinct mechanisms get loosely called caching. <strong>State-based selection</strong> uses a saved manifest to find models whose code changed and rebuild them (and their children). <strong>Incremental models</strong> keep their existing table and insert or merge only new rows. Neither one is a query-result cache; your warehouse may have its own, and that is a separate topic.</p>
+  </div>
+</div>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>The myth</th><th>The reality</th></tr></thead>
+  <tbody>
+    <tr><td>“dbt caches query results.”</td><td class="cell-bad">No. dbt rebuilds the models you select; it does not serve cached results.</td></tr>
+    <tr><td>“dbt only reruns changed models automatically.”</td><td class="cell-ok">Only if you pass a state selector; a bare <code>dbt run</code> rebuilds every selected model.</td></tr>
+    <tr><td>“dbt adds the incremental <code>WHERE</code> for you.”</td><td class="cell-bad">No. You must write the <code>is_incremental()</code> filter yourself.</td></tr>
+    <tr><td>“Incremental models are always faster.”</td><td class="cell-ok">Usually, but late-arriving or updated rows need the right strategy.</td></tr>
+  </tbody>
+</table></div>
+
+<h2>State: the manifest remembers the last build</h2>
+
+<p>Every dbt invocation writes a <strong>manifest</strong> to <code>target/manifest.json</code>. It contains a content hash of every model, macro, seed, test and source. On a later run you can point dbt at a previous manifest and ask it to select only what changed.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># Compare this project against the manifest produced by the last
+# production run, then build changed models and everything downstream.
+dbt build --select state:modified+ --state ./prod-manifest</code></pre>
+</div>
+
+<p>In CI the pattern is to download the manifest produced by the last deployment, save it to a folder, and pass that folder to <code>--state</code>. A changed staging model selects itself <em>and</em> every model that depends on it.</p>
+
+{{diagram:cache|dbt hashes each node; state:modified rebuilds the changed model and its children while untouched branches are skipped.}}
+
+<h2>Selection syntax that saves work</h2>
+
+<p>State selection is only one tool. The graph operators in the selection syntax decide how much of the DAG travels with each match.</p>
+
+<div class="table-wrap"><table class="table--compare table--zebra">
+  <thead><tr><th>Selector</th><th>What it selects</th><th>Use it when…</th></tr></thead>
+  <tbody>
+    <tr><td><code>state:modified</code></td><td>Nodes whose code changed since the saved manifest</td><td>You want the smallest safe change set</td></tr>
+    <tr class="highlight"><td><code>state:modified+</code></td><td>Modified nodes <em>plus all their children</em></td><td>Typical CI/CD build of a changed branch</td></tr>
+    <tr><td><code>+state:modified</code></td><td>Modified nodes plus all their parents</td><td>You need the upstream chain too</td></tr>
+    <tr><td><code>source_status:fresher+</code></td><td>Models downstream of sources that refreshed</td><td>Rebuild only when the raw data moved</td></tr>
+    <tr><td><code>result:error+</code></td><td>Nodes that failed plus their children</td><td>Recover after a partial run</td></tr>
+    <tr><td><code>+exposure:weekly_revenue</code></td><td>Everything that feeds one exposure</td><td>Refresh a single downstream report</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:braces}}</div>
+  <div>
+    <div class="callout__title">A plus sign has a direction</div>
+    <p><code>state:modified+</code> reads left to right: changed nodes, then <strong>downstream</strong>. <code>+state:modified</code> reads right to left: <strong>upstream</strong>, then the changed nodes. When in doubt, run <code>dbt ls --select …</code> to preview exactly what will be built before you build it.</p>
+  </div>
+</div>
+
+<h2>Incremental models: the real performance win</h2>
+
+<p>State selection avoids rebuilding unchanged models. Incremental materializations go further: instead of replacing a large table, they keep it and process only the new rows. The first run builds the full table; every later run runs your filtered <code>SELECT</code> and merges the delta.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/fct_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{{ config(
+    materialized='incremental',
+    unique_key='order_id',
+    incremental_strategy='merge'
+) }}
+
+select
+    order_id,
+    customer_id,
+    order_date,
+    quantity * unit_price as line_total
+from {{ ref('stg_orders') }}
+
+{% if is_incremental() %}
+where order_date &gt; (select max(order_date) from {{ this }})
+{% endif %}</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">You write the filter, not dbt</div>
+    <p>dbt will <strong>not</strong> invent <code>where order_date &gt; max(…)</code> for you. If you omit the <code>{% if is_incremental() %}</code> block, every run appends or merges the <em>entire</em> source again. The filter is the model author’s responsibility.</p>
+  </div>
+</div>
+
+<p><code>is_incremental()</code> is true only when the model already exists as a table, is materialized as <code>incremental</code>, and the run is not a full refresh. That single condition lets the same file serve both the first full load and every later delta.</p>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">First run</div><p class="step__body"><code>is_incremental()</code> is false, so the filter is skipped and dbt builds the whole table.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Later runs</div><p class="step__body">The filter applies, so only rows newer than the current maximum are read and merged on <code>unique_key</code>.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Logic change</div><p class="step__body">Run <code>dbt build --full-refresh --select fct_orders</code> to rebuild the table from scratch and discard the old rows.</p></div></div>
+</div>
+
+<h2>Choosing a materialization</h2>
+
+<p>Incremental is not the default for a reason. Pick the simplest materialization that meets your freshness and cost needs.</p>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Materialization</th><th>Storage</th><th>Rebuild</th><th>Best for</th></tr></thead>
+  <tbody>
+    <tr><td>View</td><td class="cell-good">None</td><td>Every query</td><td>Light staging models that are always fresh</td></tr>
+    <tr><td>Table</td><td class="cell-ok">Full copy</td><td>Every run</td><td>Marts queried often, where read speed matters</td></tr>
+    <tr><td>Incremental</td><td class="cell-ok">Existing table</td><td>Only new rows</td><td>Large fact tables that grow over time</td></tr>
+  </tbody>
+</table></div>
+
+{{diagram:materializations|View, table and incremental each trade freshness, storage and read speed differently.}}
+
+<h2>Reducing scanned bytes</h2>
+
+<p>Materialization strategy decides <em>when</em> you build. Query shape decides <em>how much</em> the warehouse reads each time — and that is often where the biggest wins hide.</p>
+
+<div class="cards">
+  <div class="card reveal"><div class="card__icon">{{icon:columns-3}}</div><div class="card__title">Select only what you need</div><p class="card__text">Replace <code>select *</code> with the columns the downstream model actually uses; wide scans cost more.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:filter}}</div><div class="card__title">Filter and join early</div><p class="card__text">Push <code>where</code> and joins into CTEs so later stages process fewer rows, not more.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:scan-line}}</div><div class="card__title">Prune partitions</div><p class="card__text">Filter on the partition column and the warehouse reads only the slices a query needs.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:database-zap}}</div><div class="card__title">Lean on clustering</div><p class="card__text">Clustering or sort keys co-locate frequently filtered columns so scans skip whole blocks.</p></div>
+</div>
+
+<h2>Watch out for these</h2>
+
+<div class="accordion">
+  <details class="acc"><summary>Changing model logic without a full refresh</summary><div class="acc__body"><p>Incremental models only touch new rows. If you change a calculation, old rows keep the old formula until you run <code>--full-refresh</code>. Version the change and schedule the rebuild deliberately.</p></div></details>
+  <details class="acc"><summary>Late-arriving rows</summary><div class="acc__body"><p>A row dated last week that lands today is older than <code>max(order_date)</code>, so the filter skips it. Widen the window with a lookback — for example <code>order_date &gt;= (select max(order_date) from {{ this }}) - interval '3' day</code> — and let <code>unique_key</code> merge duplicates.</p></div></details>
+  <details class="acc"><summary>Mutable rows that update in place</summary><div class="acc__body"><p>If a row’s values can change after it is loaded, pure append loses the update. Use a <code>unique_key</code> with a merge or delete+insert strategy, or snapshot the source to preserve history.</p></div></details>
+  <details class="acc"><summary>Trusting state selection for data freshness</summary><div class="acc__body"><p><code>state:modified</code> compares code, not data. A model whose source changed but whose SQL did not will be skipped. Pair it with <code>source_status:fresher+</code> or a scheduled full build.</p></div></details>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>dbt has no result cache. “Caching” really means <strong>state-based selection</strong> plus <strong>incremental</strong> materializations.</span></li>
+  <li>{{icon:circle-check}}<span>Point <code>--state</code> at a previous manifest and use <code>state:modified+</code> to rebuild only changed models and their children.</span></li>
+  <li>{{icon:circle-check}}<span>You write the <code>{% if is_incremental() %}</code> filter; dbt will not add a <code>WHERE</code> clause on its own.</span></li>
+  <li>{{icon:circle-check}}<span><code>--full-refresh</code> rebuilds an incremental model from scratch — required when its logic changes.</span></li>
+  <li>{{icon:circle-check}}<span>Query shape matters too: narrow columns, early filters and partition pruning cut scanned bytes.</span></li>
+</ul>
+
+<div class="quiz" data-explain="dbt only adds the incremental behavior when you write the is_incremental() filter yourself; it never invents the WHERE clause.">
+  <div class="quiz__q">{{icon:circle-help}} <span>What must you do for an incremental model to process only new rows?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>Nothing — dbt automatically filters on the max date.</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>Write an <code>{% if is_incremental() %}</code> block with your own <code>WHERE</code> filter.</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>Set <code>materialized='incremental'</code> and dbt handles the rest.</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Your models are fast and tested — but which dashboard do they power? In <a href="./7-exposures.html">Exposures</a> you’ll connect models to the metrics and dashboards that depend on them.</p>
+  </div>
+</div>

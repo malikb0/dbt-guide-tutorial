@@ -1,0 +1,263 @@
+<p class="lead">At ten million rows everything still feels instant. At two hundred million, a full table scan per model turns a ten-minute build into a two-hour one. This lesson is about the two levers that fix it: <strong>compute less</strong> (incremental strategies and dbt state) and <strong>read less</strong> (partitioning, clustering and pruning).</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:gauge}}</div>
+  <div>
+    <div class="callout__title">The performance philosophy: only rebuild what changed</div>
+    <p>Two independent savings compound. dbt's state tracking skips models whose definition has not changed; an incremental model skips the rows it already processed. Neither happens automatically for your data — you configure both.</p>
+  </div>
+</div>
+
+<h2>Read less: partitioning and clustering</h2>
+
+<p>A partition physically splits a table into slices, usually by date. When a query filters on the partition column, the warehouse reads only the matching slices and <em>prunes</em> the rest. Clustering then sorts data <em>within</em> each partition so common filters and joins skip blocks too.</p>
+
+{{diagram:partition|A query for one month reads one partition instead of the whole table.}}
+
+<p>If your warehouse supports them, declare both in the model config. Here an orders fact is partitioned by order date and clustered by customer:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/marts/fct_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{{ config(
+    materialized='incremental',
+    unique_key='order_id',
+    partition_by={'field': 'order_date', 'data_type': 'date'},
+    cluster_by=['customer_id']
+) }}
+
+select
+    order_id,
+    customer_id,
+    order_date,
+    quantity * unit_price as order_total
+from {{ ref('stg_orders') }}
+
+{% if is_incremental() %}
+where order_date &gt;= (select max(order_date) from {{ this }})
+{% endif %}</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Partitioning is warehouse-specific</div>
+    <p><code>partition_by</code> and <code>cluster_by</code> are supported by BigQuery, Snowflake, Databricks/Spark and others — not by DuckDB, which has neither concept. Check your adapter's page before copying this config; on an unsupported adapter the keys are simply inert.</p>
+  </div>
+</div>
+
+<h2>Compute less: incremental strategies</h2>
+
+<p>An incremental model only runs its query to produce new rows. The <code>incremental_strategy</code> decides <em>how</em> those rows land in the existing table, and each strategy trades correctness against speed and warehouse support.</p>
+
+{{diagram:materializations|Incremental is the materialization built for growing tables; the strategy controls how new rows are merged in.}}
+
+<div class="table-wrap">
+  <table class="table--compare table--zebra">
+    <thead><tr><th>Strategy</th><th>What dbt does</th><th>Needs <code>unique_key</code></th><th>Best for</th></tr></thead>
+    <tbody>
+      <tr><td><code>append</code></td><td>Inserts the new rows; never updates or deletes.</td><td class="cell-bad">No</td><td>Immutable event logs that only grow.</td></tr>
+      <tr class="highlight"><td><code>merge</code></td><td>Updates matching keys and inserts the rest (an upsert).</td><td class="cell-good">Yes</td><td>Mutable rows; the default on most adapters.</td></tr>
+      <tr><td><code>delete+insert</code></td><td>Deletes rows whose keys appear in the new batch, then inserts them.</td><td class="cell-good">Yes</td><td>Warehouses without a native <code>MERGE</code>.</td></tr>
+      <tr><td><code>insert_overwrite</code></td><td>Replaces whole partitions covered by the batch.</td><td class="cell-ok">No</td><td>Partitioned tables on BigQuery/Spark.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="grid-2 mt-2">
+  <div>
+    <h3>Upsert with merge</h3>
+    <p>When a row can change — an order's status, a customer's region — you want the new version to replace the old one. <code>merge</code> matches on <code>unique_key</code> and updates in place.</p>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">models/fct_order_status.sql</span>
+        <span class="codeblock__lang">sql</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-sql">{{ config(
+    materialized='incremental',
+    unique_key='order_id',
+    incremental_strategy='merge'
+) }}</code></pre>
+    </div>
+  </div>
+  <div>
+    <h3>Replace with delete+insert</h3>
+    <p>The portable alternative when <code>MERGE</code> is unavailable. dbt deletes the affected keys, then inserts the fresh rows in one transaction.</p>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">models/fct_events.sql</span>
+        <span class="codeblock__lang">sql</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-sql">{{ config(
+    materialized='incremental',
+    unique_key='event_id',
+    incremental_strategy='delete+insert'
+) }}</code></pre>
+    </div>
+  </div>
+</div>
+
+<p>For append-only logs, drop <code>unique_key</code> and use <code>append</code> — it is the fastest option because the warehouse does no matching at all:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/events.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{{ config(
+    materialized='incremental',
+    incremental_strategy='append'
+) }}
+
+select event_id, event_type, occurred_at
+from {{ source('ecommerce', 'events') }}</code></pre>
+</div>
+
+<h2>Writing the incremental filter yourself</h2>
+
+<p>This is the single most common misconception about incremental models. <strong>dbt does not add a <code>WHERE</code> clause for you.</strong> If you tell dbt a model is incremental but write an unbounded <code>SELECT</code>, every run reprocesses the entire source and appends it again.</p>
+
+<p>You are responsible for the filter, wrapped in the <code>is_incremental()</code> test so it only applies after the first build:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/fct_orders.sql (excerpt)</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select order_id, customer_id, order_date, order_total
+from {{ ref('stg_orders') }}
+
+{% if is_incremental() %}
+where order_date &gt;= (select max(order_date) from {{ this }})
+{% endif %}</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:filter}}</div>
+  <div>
+    <div class="callout__title">What is_incremental() actually checks</div>
+    <p>It is true only when three things hold: the model is already materialized as a table in the warehouse, the current run is not <code>--full-refresh</code>, and the model's materialization is <code>incremental</code>. On the very first run it is false, so the model builds the full table — then every later run sees the filter.</p>
+  </div>
+</div>
+
+{{diagram:cache|State tracking and the incremental filter attack different waste: unmodified models are skipped, and processed rows are not scanned again.}}
+
+<h2>Threads and concurrency</h2>
+
+<p>dbt builds independent models in parallel, up to the number of <code>threads</code> configured for the target. On an eight-core warehouse, more threads can cut wall-clock time dramatically — until the warehouse saturates and every query slows down together.</p>
+
+<div class="split">
+  <div class="split__body stack">
+    <p>Set <code>threads</code> per output in <code>profiles.yml</code>, and keep dev modest so a laptop-sized warehouse is not overwhelmed.</p>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">profiles.yml</span>
+        <span class="codeblock__lang">yaml</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-yaml">outputs:
+  prod:
+    type: duckdb
+    path: prod.duckdb
+    schema: analytics
+    threads: 8</code></pre>
+    </div>
+  </div>
+  <div class="split__visual">
+    <div class="callout callout--warning">
+      <div class="callout__icon">{{icon:sliders-horizontal}}</div>
+      <div>
+        <div class="callout__title">More threads is not linearly faster</div>
+        <p>Start at four, raise until the warehouse's CPU or concurrency limit is the bottleneck, then stop. You can also override per invocation with <code>--threads</code>, which is handy in CI where the runner is small.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tryit"><div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">dbt build --threads 8 --select fct_orders+</code></pre>
+    </div>
+    <p>dbt prints <code>Concurrency: 8 threads</code> and starts up to eight independent nodes at once. If the warehouse begins queueing, drop the number rather than adding more.</p>
+  </div>
+</div>
+
+<h2>Rebuilding on purpose with --full-refresh</h2>
+
+<p>Sometimes the delta is not enough. When you change an incremental model's logic, its <code>unique_key</code>, or a column's type, the existing table is stale and only a full rebuild will do. <code>--full-refresh</code> drops and recreates the affected incremental models:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt build --full-refresh --select fct_orders+</code></pre>
+</div>
+
+<p>Because a full refresh ignores the incremental branch on that run, the model executes its unbounded <code>SELECT</code> and rebuilds from the source. For schema drift on incremental models, control what happens when columns change:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">dbt_project.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">models:
+  dbt_shop:
+    +on_schema_change: append_new_columns</code></pre>
+</div>
+
+<p>Accepted values are <code>ignore</code> (the default), <code>fail</code>, <code>append_new_columns</code> and <code>sync_all_columns</code>. Pick <code>fail</code> when a surprise schema change should stop the run instead of silently drifting.</p>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>Partition and cluster large tables so filtered queries scan only the slices they need.</span></li>
+  <li>{{icon:circle-check}}<span><code>append</code> is fastest for immutable logs; <code>merge</code> upserts mutable rows; <code>delete+insert</code> is the portable fallback.</span></li>
+  <li>{{icon:circle-check}}<span>dbt never adds the incremental <code>WHERE</code> for you — write it inside <code>{% if is_incremental() %}</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Tune <code>threads</code> to the warehouse, not the model count; more concurrency eventually hurts.</span></li>
+  <li>{{icon:circle-check}}<span><code>--full-refresh</code> rebuilds incremental models from scratch after logic or schema changes.</span></li>
+  <li>{{icon:circle-check}}<span>Control schema drift with <code>on_schema_change</code> rather than discovering it in a dashboard.</span></li>
+</ul>
+
+<div class="quiz" data-explain="dbt only adds the merge/append mechanics; you must write the is_incremental() WHERE clause yourself or every run appends the full table again.">
+  <div class="quiz__q">{{icon:circle-help}} <span>What must you add to make an incremental model process only new rows?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>Nothing — dbt adds <code>WHERE order_date &gt; MAX(...)</code> automatically</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>Your own <code>{% if is_incremental() %}</code> block containing the filter</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>A <code>cluster_by</code> config</span></button>
+    <button class="quiz__option" type="button"><span class="mark">D</span><span><code>on_schema_change='sync_all_columns'</code></span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>That is the end of the Advanced level. Continue into the Expert level with <a href="../expert/1-materializations.html">Custom Materializations &amp; Build Hooks</a>, where you take control of how dbt persists a model.</p>
+  </div>
+</div>

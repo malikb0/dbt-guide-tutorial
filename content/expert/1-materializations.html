@@ -1,0 +1,244 @@
+<p class="lead">A materialization is the code that decides how a dbt model becomes a database object. <code>view</code>, <code>table</code>, <code>incremental</code> and <code>ephemeral</code> are not built into the SQL compiler — they are materialization macros. When none of them fits, you write your own and hook into dbt's lifecycle.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:dna}}</div>
+  <div>
+    <div class="callout__title">A materialization is a macro with a contract</div>
+    <p>It receives the compiled model SQL, prepares the database, runs pre- and post-hooks, executes the SQL, cleans up, and returns the relations it created. Everything dbt does with a model is defined here.</p>
+  </div>
+</div>
+
+<h2>The materialization you already use</h2>
+
+<p>Every built-in strategy trades freshness, storage and speed. Custom materializations extend that list for cases the four defaults cannot express.</p>
+
+{{diagram:materializations|View, table, incremental and ephemeral are the built-ins; a custom materialization adds a fifth option of your own design.}}
+
+<h2>The lifecycle dbt runs</h2>
+
+<p>Whether it is the built-in <code>table</code> or your macro, the same phases run in order. Knowing the order is what lets you place hooks correctly.</p>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Prepare</div><p class="step__body">Look up the existing relation and decide whether to drop, back up or leave it in place.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Pre-hooks</div><p class="step__body">Run the model's configured <code>pre_hook</code> statements.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Build</div><p class="step__body">Execute the model SQL through a <code>statement('main')</code> block to create or modify the relation.</p></div></div>
+  <div class="step reveal"><div class="step__marker">4</div><div><div class="step__title">Post-hooks</div><p class="step__body">Run <code>post_hook</code> statements such as grants or statistics.</p></div></div>
+  <div class="step reveal"><div class="step__marker">5</div><div><div class="step__title">Return relations</div><p class="step__body">Return the relations created so dbt can update its relation cache.</p></div></div>
+</div>
+
+<h2>Writing your own materialization</h2>
+
+<p>Materialization macros live in <code>macros/</code> and use <code>{% materialization %}</code> instead of <code>{% macro %}</code>. The second argument binds it to an adapter (<code>default</code> is the fallback). The special variable <code>sql</code> holds the compiled model query; <code>pre_hooks</code> and <code>post_hooks</code> are injected automatically.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">macros/materializations/my_table.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% materialization my_table, default %}
+
+  {%- set target_relation = api.Relation.create(
+        identifier=this.identifier,
+        schema=this.schema,
+        database=this.database,
+        type='table') -%}
+
+  {%- set existing_relation = adapter.get_relation(
+        database=this.database,
+        schema=this.schema,
+        identifier=this.identifier) -%}
+
+  {%- if existing_relation is not none and existing_relation.type != 'table' -%}
+    {%- do adapter.drop_relation(existing_relation) -%}
+  {%- endif -%}
+
+  {{ run_hooks(pre_hooks) }}
+
+  {% call statement('main') %}
+    {{ create_table_as(False, target_relation, sql) }}
+  {% endcall %}
+
+  {{ run_hooks(post_hooks) }}
+
+  {{ adapter.commit() }}
+
+  {{ return({'relations': [target_relation]}) }}
+
+{% endmaterialization %}</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:book-open}}</div>
+  <div>
+    <div class="callout__title">Read the built-ins before you write one</div>
+    <p>The <code>table</code>, <code>view</code> and <code>incremental</code> materializations ship with dbt. They are the best reference for relation handling, <code>--full-refresh</code> behaviour and cache updates — copy their structure rather than starting from a blank file.</p>
+  </div>
+</div>
+
+<h2>Inspecting relations with get_columns_in_relation</h2>
+
+<p>To make schema-aware decisions — backfill a column, sync new columns, or skip work when nothing changed — query the existing relation's shape with <code>adapter.get_columns_in_relation(relation)</code>. It returns <code>Column</code> objects with <code>.name</code>, <code>.data_type</code> and helpers such as <code>.is_numeric()</code>.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">macros/column_audit.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% macro column_audit(relation) %}
+    {%- set columns = adapter.get_columns_in_relation(relation) -%}
+    {%- for column in columns %}
+    {%- if column.is_numeric() %}
+    -- numeric: {{ column.name }} ({{ column.data_type }})
+    {%- endif %}
+    {%- endfor %}
+{% endmacro %}</code></pre>
+</div>
+
+<p>Use it inside a materialization to compare the target and the incoming data, then choose an <code>append_new_columns</code>, <code>sync_all_columns</code> or full-rebuild path. This is exactly how dbt's incremental <code>on_schema_change</code> logic works under the hood.</p>
+
+<h2>Pointing a model at it</h2>
+
+<p>The model itself is unchanged: a plain <code>SELECT</code>. Only the <code>materialized</code> config changes to the name of your materialization.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/fct_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{{ config(materialized='my_table') }}
+
+select
+    order_id,
+    customer_id,
+    order_date,
+    quantity * unit_price as order_total
+from {{ ref('stg_orders') }}</code></pre>
+</div>
+
+<p>Notice what the model does <em>not</em> contain: no DDL, no <code>CREATE</code>, no persistence logic. That belongs to the materialization and stays reusable across every model that selects it.</p>
+
+<h2>Hooks: pre_hook and post_hook</h2>
+
+<p>Hooks are SQL statements dbt runs around a model. <code>pre_hook</code> fires before the materialization builds the relation; <code>post_hook</code> fires after. Each accepts a single string or a list, and hooks can reference <code>{{ this }}</code> to target the model being built.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/fct_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{{ config(
+    materialized='my_table',
+    pre_hook="insert into audit_log values ('fct_orders', current_timestamp, 'started')",
+    post_hook=[
+      "insert into audit_log values ('fct_orders', current_timestamp, 'complete')",
+      "analyze {{ this }}"
+    ]
+) }}
+
+select order_id, customer_id, order_date, order_total
+from {{ ref('stg_orders') }}</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Hooks fail the model if they fail</div>
+    <p>If a <code>pre_hook</code> errors, the model never builds; if a <code>post_hook</code> errors, the model is marked as failed (and, on transactional warehouses, rolled back). Keep hooks small, idempotent and free of long-running DDL.</p>
+  </div>
+</div>
+
+<h2>Project-wide hooks: on-run-start and on-run-end</h2>
+
+<p>Sometimes the hook is not about one model but about the whole invocation. Declare <code>on-run-start</code> and <code>on-run-end</code> in <code>dbt_project.yml</code>. The end hook has extra context: <code>results</code> (one per executed node) and <code>schemas</code> (the schemas touched).</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">dbt_project.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">on-run-start:
+  - "{{ log('dbt run starting', info=True) }}"
+
+on-run-end:
+  - "{% for schema in schemas %} grant usage on schema {{ schema }} to role reporter; {% endfor %}"
+  - "{{ log('built ' ~ results | length ~ ' nodes', info=True) }}"</code></pre>
+</div>
+
+<p>Use <code>on-run-start</code> for session settings and logging; use <code>on-run-end</code> for grants, statistics, and audit rows that depend on the whole run finishing. For a hook that belongs to a folder rather than a single model, set it under <code>models:</code> with a <code>+</code> prefix in <code>dbt_project.yml</code>.</p>
+
+<div class="table-wrap">
+  <table class="table--compare table--zebra">
+    <thead><tr><th>Hook</th><th>Scope</th><th>Declared in</th><th>Typical use</th></tr></thead>
+    <tbody>
+      <tr><td><code>pre_hook</code></td><td>One model, before it builds</td><td>Model config or <code>dbt_project.yml</code></td><td>Insert a "started" audit row.</td></tr>
+      <tr><td><code>post_hook</code></td><td>One model, after it builds</td><td>Model config or <code>dbt_project.yml</code></td><td>Grants, <code>analyze</code>, audit "complete".</td></tr>
+      <tr class="highlight"><td><code>on-run-start</code></td><td>The whole invocation</td><td><code>dbt_project.yml</code></td><td>Session settings, run banner.</td></tr>
+      <tr><td><code>on-run-end</code></td><td>The whole invocation</td><td><code>dbt_project.yml</code></td><td>Grants and stats; has <code>results</code> and <code>schemas</code>.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+{{diagram:pipeline|Materializations persist each node; hooks wrap individual models and the run as a whole.}}
+
+<h2>When a custom materialization is worth it</h2>
+
+<div class="pros-cons">
+  <div class="pc pc--pros"><div class="pc__title">{{icon:circle-check}} Pros</div><ul>
+    <li>Expresses persistence patterns dbt does not ship (external tables, partition swaps, special indexes).</li>
+    <li>Reusable: write once, apply to many models through config.</li>
+    <li>Encapsulates prepare/build/cleanup so models stay pure SQL.</li>
+  </ul></div>
+  <div class="pc pc--cons"><div class="pc__title">{{icon:circle-x}} Cons</div><ul>
+    <li>Advanced and adapter-specific; small mistakes corrupt or strand tables.</li>
+    <li>You own caching, commits and <code>--full-refresh</code> behaviour.</li>
+    <li>Overriding built-in names can break every model in the project.</li>
+  </ul></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">Prefer the built-ins first</div>
+    <p>Reach for a custom materialization only when config, hooks and the standard strategies genuinely cannot express the requirement. Always return the created relations and commit your transaction, or dbt will roll the work back and warn about its cache.</p>
+  </div>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>View, table, incremental and ephemeral are materialization macros, not compiler features.</span></li>
+  <li>{{icon:circle-check}}<span>A custom materialization follows the prepare → pre-hooks → build → post-hooks → return lifecycle.</span></li>
+  <li>{{icon:circle-check}}<span><code>sql</code> holds the compiled model query; <code>pre_hooks</code> and <code>post_hooks</code> are injected automatically.</span></li>
+  <li>{{icon:circle-check}}<span><code>adapter.get_columns_in_relation()</code> lets a materialization react to the existing schema.</span></li>
+  <li>{{icon:circle-check}}<span>Return <code>{'relations': [...]}</code> and call <code>adapter.commit()</code> to keep dbt consistent.</span></li>
+  <li>{{icon:circle-check}}<span><code>pre_hook</code>/<code>post_hook</code> wrap one model; <code>on-run-start</code>/<code>on-run-end</code> wrap the whole invocation.</span></li>
+</ul>
+
+<div class="quiz" data-explain="Inside a materialization, the compiled SELECT from the model is available as the special sql variable.">
+  <div class="quiz__q">{{icon:circle-help}} <span>Inside a <code>materialization</code> block, which variable holds the model's compiled query?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span><code>this</code></span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span><code>sql</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span><code>model.query</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">D</span><span><code>run_query()</code></span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>A custom materialization is a package of logic you ship. Next, in <a href="./2-ci-cd-deploy.html">CI/CD Deployment Pipelines</a>, you'll promote those artifacts safely from dev to production.</p>
+  </div>
+</div>

@@ -1,0 +1,229 @@
+<p class="lead">Every dbt project starts from data it did not create. There are two neat ways to bring that data in: <strong>seeds</strong> for small CSVs you version-control, and <strong>sources</strong> for raw tables your EL tool already loaded into the warehouse. This lesson covers both — and how to check whether your sources are fresh.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">Two doors into the project</div>
+    <p>A <strong>seed</strong> is a file <em>you own</em> that dbt loads. A <strong>source</strong> is a table <em>someone else owns</em> that dbt only reads. Once inside, both behave like normal data your models can query.</p>
+  </div>
+</div>
+
+<h2>Two ways in</h2>
+
+{{diagram:seeds-sources|Seeds live in Git and are loaded by dbt; sources are raw tables dbt merely points at.}}
+
+<div class="flow">
+  <span class="flow__node">{{icon:file-code}}country_codes.csv</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:table}}dbt seed → table</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:hammer}}your models</span>
+</div>
+
+<h2>Seeds — small CSVs under version control</h2>
+
+<p>A seed is a static CSV in the <code>seeds/</code> folder. dbt loads it into the warehouse as a table, so the data is reviewable in the same pull request as the model that uses it. Keep seeds small — they are for reference data, not exports.</p>
+
+<h3>Create the CSV</h3>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">seeds/country_codes.csv</span>
+    <span class="codeblock__lang">csv</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code>code,country_name,region
+US,United States,North America
+CA,Canada,North America
+GB,United Kingdom,Europe
+DE,Germany,Europe
+JP,Japan,Asia-Pacific</code></pre>
+</div>
+
+<h3>Load it</h3>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt seed                         # loads every seed
+dbt seed --select country_codes  # loads only this one</code></pre>
+</div>
+
+<h3>Verify it</h3>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">duckdb ecommerce.duckdb
+select * from main.country_codes;</code></pre>
+</div>
+
+<p>You can pin column types when the CSV is ambiguous — for example so a code stays a string rather than becoming a number:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">dbt_project.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">seeds:
+  ecommerce_analytics:
+    country_codes:
+      +column_types:
+        code: varchar          # force "US" to stay text
+        country_name: varchar</code></pre>
+</div>
+
+<h2>Sources — raw tables you only observe</h2>
+
+<p>A source is a table dbt does not create. Declare it once in a <code>_sources.yml</code> file so dbt knows where it lives, then read it with <code>{{ source('group', 'table') }}</code>. dbt records the edge in the lineage graph and can test and freshness-check it.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_sources.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+sources:
+  - name: ecommerce
+    description: "Raw e-commerce tables landed by the EL job."
+    schema: main
+    loaded_at_field: _loaded_at      # timestamp used for freshness
+    freshness:
+      warn_after:  {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
+    tables:
+      - name: orders
+        description: "One row per order line."
+        columns:
+          - name: order_id
+            description: "Order identifier"
+          - name: customer_id
+            description: "FK to customers"</code></pre>
+</div>
+
+<h2>Check source freshness</h2>
+
+<p>Freshness compares the newest value in <code>loaded_at_field</code> against the thresholds you set, so a stalled pipeline becomes a warning or an error instead of a silent one.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt source freshness</code></pre>
+</div>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Outcome</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td class="cell-good">pass</td><td>The newest row is within <code>warn_after</code></td></tr>
+    <tr><td class="cell-ok">warn</td><td>Data is older than <code>warn_after</code> but within <code>error_after</code></td></tr>
+    <tr><td class="cell-bad">error</td><td>Data is older than <code>error_after</code> — the pipeline is likely broken</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Use a seed and a source in one model</h2>
+
+<p>The seed is reached with <code>ref()</code>, the raw table with <code>source()</code>. Mixing them up is the single most common beginner mistake.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/orders_by_region.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    cc.region,
+    count(*)                     as total_orders,
+    sum(o.line_total)            as revenue
+from {{ ref('first_orders') }} as o
+left join {{ source('ecommerce', 'customers') }} as cust
+    on o.customer_id = cust.id
+left join {{ ref('country_codes') }} as cc
+    on cust.country_code = cc.code
+group by cc.region
+order by revenue desc</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Do not join on a bare table name</div>
+    <p>The old guide wrote <code>join customers c</code>, which bypasses dbt entirely. Use <code>{{ ref('country_codes') }}</code> for the seed and <code>{{ source('ecommerce', 'customers') }}</code> for the raw table so the dependency graph stays correct.</p>
+  </div>
+</div>
+
+<h2>Seeds vs sources: which one?</h2>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Question</th><th>{{icon:sprout}} Seed</th><th>{{icon:satellite}} Source</th></tr></thead>
+  <tbody>
+    <tr><td>Where does the data live before dbt?</td><td>A CSV in your repo</td><td>A table in the warehouse</td></tr>
+    <tr><td>Who creates the warehouse table?</td><td>dbt, with <code>dbt seed</code></td><td>Your EL tool</td></tr>
+    <tr><td>How do you reference it?</td><td><code>{{ ref('name') }}</code></td><td><code>{{ source('group', 'table') }}</code></td></tr>
+    <tr><td>Best for</td><td>Lookups, mapping tables, test fixtures</td><td>Business data landed from upstream systems</td></tr>
+    <tr><td>Keeps history in Git?</td><td class="cell-good">Yes — every row</td><td class="cell-bad">No — only the declaration</td></tr>
+  </tbody>
+</table></div>
+
+<h2>See the lineage</h2>
+
+<p>Because every source and seed is declared, dbt can draw the full path from a raw table to the dashboard that consumes it. <code>dbt docs generate</code> builds the documentation site, and <code>dbt docs serve</code> opens the interactive lineage graph.</p>
+
+{{diagram:lineage|From source to exposure: dbt documents each hop so anyone can trace a metric back to where it began.}}
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt docs generate   # build the docs + lineage catalog
+dbt docs serve      # open it in your browser</code></pre>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span><strong>Seeds</strong> are small CSVs dbt loads with <code>dbt seed</code>; reference them with <code>{{ ref('name') }}</code>.</span></li>
+  <li>{{icon:circle-check}}<span><strong>Sources</strong> are raw warehouse tables declared in <code>_sources.yml</code>; read them with <code>{{ source('group', 'table') }}</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Add <code>loaded_at_field</code> and <code>freshness</code> thresholds, then run <code>dbt source freshness</code> to detect stale data.</span></li>
+  <li>{{icon:circle-check}}<span>Never join on a bare table name — always go through <code>ref()</code> or <code>source()</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Declaring both makes <code>dbt docs</code> show end-to-end lineage from raw table to dashboard.</span></li>
+</ul>
+
+<div class="quiz" data-explain="A seed is a small CSV committed to the repo and loaded by dbt itself, which is why you reach it with ref() rather than source().">
+  <div class="quiz__q">{{icon:circle-help}} <span>Which reference reads a table that <code>dbt seed</code> created?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span><code>{{ source('ecommerce', 'country_codes') }}</code></span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span><code>{{ ref('country_codes') }}</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span><code>from country_codes</code></span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>You have models fed by seeds and sources. In <a href="./6-basic-tests.html">Basic Tests</a> you'll add assertions that stop bad data reaching your dashboards.</p>
+  </div>
+</div>

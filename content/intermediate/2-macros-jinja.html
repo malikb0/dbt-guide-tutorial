@@ -1,0 +1,319 @@
+<p class="lead">Copy-pasting the same SQL between models is a quiet bug factory: fix it in one file and the others drift. Jinja — dbt's templating engine — lets you extract that logic into a <strong>macro</strong>, one reusable function you call from every model. Write it once, change it once.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">A macro returns SQL text</div>
+    <p>Macros do not move data. They run while dbt <em>compiles</em> your project and hand back a string that gets spliced into the query. If you can write it in a SQL <code>SELECT</code> and you repeat it, it can be a macro.</p>
+  </div>
+</div>
+
+<h2>The copy-paste problem</h2>
+
+<p>Imagine three models all need to turn a region code into a friendly label. Without a macro, the same <code>CASE</code> expression is pasted into <code>stg_orders</code>, <code>stg_customers</code> and <code>fct_sales</code>. When marketing asks for a new region, you hunt down every copy — and miss one.</p>
+
+{{diagram:macros|Write the logic once as a macro and every model that needs it calls the same definition.}}
+
+<p>Macros are just Jinja files under <code>macros/</code>. Once defined, they are available to every model in the project — no import statement required.</p>
+
+<h2>Before and after: DRY in action</h2>
+
+<p>The same requirement, written two ways. Switch tabs to compare.</p>
+
+<div class="tabs">
+  <div class="tabs__list" role="tablist">
+    <button class="tab" type="button" aria-selected="true">{{icon:copy}} Before</button>
+    <button class="tab" type="button">{{icon:puzzle}} After</button>
+  </div>
+
+  <div class="tabs__panel">
+    <p>The label logic is repeated in every model. Change the wording and you must remember all of them.</p>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">models/stg_orders.sql</span>
+        <span class="codeblock__lang">sql</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-sql">select
+    order_id,
+    region,
+    case
+        when region = 'North America' then 'US &amp; Canada'
+        when region = 'Europe' then 'EU'
+        when region = 'Asia-Pacific' then 'APAC'
+        else 'Other'
+    end as region_label
+from {{ ref('stg_customers') }}
+
+-- ...and the exact same CASE is pasted into stg_customers.sql,
+-- fct_sales.sql and every other model that needs a region label.</code></pre>
+    </div>
+  </div>
+
+  <div class="tabs__panel">
+    <p>The logic moves into one macro. Models call it by name, and the next change happens in exactly one place.</p>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">macros/region.sql</span>
+        <span class="codeblock__lang">sql</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-sql">{% macro region_label(column_name) %}
+    case
+        when {{ column_name }} = 'North America' then 'US &amp; Canada'
+        when {{ column_name }} = 'Europe' then 'EU'
+        when {{ column_name }} = 'Asia-Pacific' then 'APAC'
+        else 'Other'
+    end
+{% endmacro %}</code></pre>
+    </div>
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">models/stg_orders.sql</span>
+        <span class="codeblock__lang">sql</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-sql">select
+    order_id,
+    {{ region_label('region') }} as region_label
+from {{ ref('stg_customers') }}</code></pre>
+    </div>
+  </div>
+</div>
+
+<h2>Anatomy of a macro</h2>
+
+<p>A macro is declared with <code>{% macro %}</code>, takes arguments with optional defaults, and ends with <code>{% endmacro %}</code>. Whatever Jinja renders between those tags becomes part of the compiled query.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">macros/currency.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% macro cents_to_dollars(column_name, scale=2) %}
+    round(cast({{ column_name }} as decimal(18, 2)) / 100, {{ scale }})
+{% endmacro %}</code></pre>
+</div>
+
+<p>Call it from any model, and it compiles to plain SQL:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/stg_payments.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    payment_id,
+    {{ cents_to_dollars('amount_cents') }} as amount_usd,
+    {{ cents_to_dollars('fee_cents', 4) }} as fee_usd
+from {{ ref('stg_payments') }}</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:braces}}</div>
+  <div>
+    <div class="callout__title">Arguments are just text</div>
+    <p>Jinja substitutes the argument where you write <code>{{ column_name }}</code>. Because the result is SQL text, keep quoting intentional: <code>cents_to_dollars('amount_cents')</code> passes the <em>column name</em>, not its value.</p>
+  </div>
+</div>
+
+<h2>Loops: generate repeated SQL</h2>
+
+<p>An e-commerce report often needs one revenue column per region. Instead of writing the same <code>sum(case ...)</code> by hand, loop over a list.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/revenue_by_region.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% set regions = ['North America', 'Europe', 'Asia-Pacific'] %}
+
+select
+    order_date,
+    {% for region in regions %}
+    sum(case when region = '{{ region }}' then revenue else 0 end)
+        as {{ region | replace(' ', '_') | lower }}_revenue{% if not loop.last %},{% endif %}
+    {% endfor %}
+from {{ ref('stg_orders') }}
+group by 1</code></pre>
+</div>
+
+<p>Two details matter: <code>loop.last</code> keeps the commas correct, and Jinja filters such as <code>replace</code> and <code>lower</code> turn a human label into a clean column alias.</p>
+
+<h2>Conditionals: change the SQL by context</h2>
+
+<p>The <code>{% if %}</code> tag branches the compiled SQL. A common use is excluding test data outside production.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/stg_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    order_id,
+    customer_id,
+    order_date,
+    revenue
+from {{ source('ecommerce', 'orders') }}
+
+{% if not var('include_test_orders', false) %}
+where is_test = false
+{% endif %}</code></pre>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:refresh-cw}}</div>
+  <div>
+    <div class="callout__title">The same idea powers incremental models</div>
+    <p>The <code>{% if is_incremental() %}</code> block you met in materializations is just a conditional: dbt is asking "does this model already exist?" and your SQL answers accordingly.</p>
+  </div>
+</div>
+
+<h2>Variables, var() and config()</h2>
+
+<p>Jinja gives you a few ways to parameterize a project. Use <code>var()</code> for values that change between runs, and <code>config()</code> for model settings rather than data.</p>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Pattern</th><th>Example</th><th>Use it for</th></tr></thead>
+    <tbody>
+      <tr><td>{{icon:braces}} <code>{% set %}</code></td><td><code>{% set tax = 0.2 %}</code></td><td>A local value used inside one model or macro</td></tr>
+      <tr><td>{{icon:sliders-horizontal}} <code>var()</code></td><td><code>{{ var('start_date', '2024-01-01') }}</code></td><td>Project variables set in <code>dbt_project.yml</code> or <code>--vars</code></td></tr>
+      <tr><td>{{icon:cog}} <code>config()</code></td><td><code>{{ config(materialized='table') }}</code></td><td>Model settings, not query values</td></tr>
+      <tr><td>{{icon:key}} <code>env_var()</code></td><td><code>{{ env_var('DBT_USER') }}</code></td><td>Reading an environment variable at compile time</td></tr>
+      <tr><td>{{icon:target}} <code>target.name</code></td><td><code>{% if target.name == 'prod' %}</code></td><td>Branching on the active target (dev, prod)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/orders_since.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% set start_date = var('start_date', '2024-01-01') %}
+
+select *
+from {{ ref('stg_orders') }}
+where order_date &gt;= '{{ start_date }}'</code></pre>
+</div>
+
+<p>Override the default from the command line without touching a file:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt run --select orders_since --vars '{start_date: 2024-06-01}'</code></pre>
+</div>
+
+<h2>Using macros from packages: dbt_utils</h2>
+
+<p>You don't have to write every macro. The community package <strong>dbt_utils</strong> ships hundreds of battle-tested ones. Declare it in <code>packages.yml</code>, then install it.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">packages.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">packages:
+  - package: dbt-labs/dbt_utils
+    version: ["&gt;=1.0.0", "&lt;2.0.0"]</code></pre>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt deps</code></pre>
+</div>
+
+<p>Package macros are namespaced with the package name, so you can tell where a function came from:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/order_lines.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    {{ dbt_utils.generate_surrogate_key(['order_id', 'product_sku']) }} as order_line_key,
+    {{ dbt_utils.star(from=ref('stg_orders'), except=['_loaded_at']) }}
+from {{ ref('stg_orders') }}</code></pre>
+</div>
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>dbt_utils macro</th><th>What it generates</th></tr></thead>
+    <tbody>
+      <tr><td><code>generate_surrogate_key()</code></td><td>A stable hash key from one or more columns</td></tr>
+      <tr><td><code>star()</code></td><td>All columns, optionally excluding some</td></tr>
+      <tr><td><code>pivot()</code></td><td>Rows to columns for a known set of values</td></tr>
+      <tr><td><code>date_spine()</code></td><td>A continuous date range for a calendar model</td></tr>
+      <tr><td><code>union_relations()</code></td><td>Appends multiple relations with matching columns</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Because project and package macros are global, a single definition can standardize a transformation across every layer of the project — staging and marts alike.</p>
+
+{{diagram:layers|Macros are shared building blocks: one definition is available to every model in every layer.}}
+
+<h2>Macro hygiene</h2>
+
+<div class="accordion">
+  <details class="acc"><summary>Keep macros small and single-purpose</summary><div class="acc__body"><p>One macro should do one thing. A macro that formats, filters and aggregates is harder to reuse and test than three focused ones.</p></div></details>
+  <details class="acc"><summary>Whitespace control keeps compiled SQL readable</summary><div class="acc__body"><p>Jinja tags leave blank lines. Use <code>{%- ... -%}</code> to trim the surrounding whitespace when your generated SQL starts looking ragged.</p></div></details>
+  <details class="acc"><summary>Don't abstract something used once</summary><div class="acc__body"><p>A macro used in a single model is just indirection. Reach for one when the same pattern appears in several places.</p></div></details>
+  <details class="acc"><summary>Macros generate SQL; they don't transform data</summary><div class="acc__body"><p>Unless you deliberately use advanced features like <code>run_query()</code>, macros only assemble text. The warehouse still does the data work when the model runs.</p></div></details>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>A macro is a reusable Jinja function that returns SQL text at compile time — it does not move data.</span></li>
+  <li>{{icon:circle-check}}<span>Put macros in <code>macros/*.sql</code> with <code>{% macro name(args) %} … {% endmacro %}</code>; every model can call them.</span></li>
+  <li>{{icon:circle-check}}<span><code>{% for %}</code> loops and <code>{% if %}</code> conditionals generate or branch SQL without copy-paste.</span></li>
+  <li>{{icon:circle-check}}<span>Use <code>var('name', default)</code> for per-run values and <code>config()</code> for model settings.</span></li>
+  <li>{{icon:circle-check}}<span>Install community macros with <code>packages.yml</code> + <code>dbt deps</code>, then call them namespaced, e.g. <code>dbt_utils.star()</code>.</span></li>
+</ul>
+
+<div class="quiz" data-explain="A dbt macro is a reusable Jinja function: it runs during compilation and returns SQL text that is spliced into the query. It works with the query, not with your stored data.">
+  <div class="quiz__q">{{icon:circle-help}} <span>What best describes a dbt macro?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>A stored procedure that transforms rows in the warehouse.</span></button>
+    <button class="quiz__option" type="button"><span class="mark">B</span><span>A Python script dbt runs after every model.</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">C</span><span>A reusable Jinja function that returns SQL text at compile time.</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Reusable SQL is powerful — and risky if it is wrong. In <a href="./3-tests-refine.html">Refining Tests with dbt_utils</a> you'll add relationships, accepted values and package-powered tests that catch bad data early.</p>
+  </div>
+</div>

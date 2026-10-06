@@ -1,0 +1,257 @@
+<p class="lead">A model that runs without errors can still be wrong: duplicate keys, orphaned foreign keys, a status that never should have existed. dbt tests turn those expectations into assertions, run them on every build, and stop bad data before a dashboard ever sees it.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">A test is a query that returns failures</div>
+    <p>Every dbt test compiles to a SQL query. If the query returns <strong>zero rows</strong>, the test passes. If it returns any rows, those rows are the failures and the test fails. That single idea models every test, generic or custom.</p>
+  </div>
+</div>
+
+<h2>The four built-in generic tests</h2>
+
+<p>dbt ships four generic tests. You declare them in YAML next to the model — no SQL to write.</p>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Test</th><th>It passes when…</th><th>Typical column</th></tr></thead>
+    <tbody>
+      <tr><td>{{icon:circle-check}} <code>not_null</code></td><td>No NULL values exist</td><td>Required IDs, emails, timestamps</td></tr>
+      <tr><td>{{icon:circle-check}} <code>unique</code></td><td>Every value appears once</td><td>Primary keys, natural keys</td></tr>
+      <tr><td>{{icon:filter}} <code>accepted_values</code></td><td>Every value is in an allowed list</td><td>Status, channel, currency columns</td></tr>
+      <tr><td>{{icon:git-compare}} <code>relationships</code></td><td>Every value exists in a parent column</td><td>Foreign keys pointing to dimensions</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Where tests live</h2>
+
+<p>Tests are declared in a <code>_models.yml</code> file (often <code>schema.yml</code>) in the models directory. The modern key is <code>data_tests</code>; older projects spell it <code>tests</code> and still work.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_models.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+models:
+  - name: fct_orders
+    description: "One row per completed order."
+    columns:
+      - name: order_id
+        description: "Primary key for the order."
+        data_tests:
+          - unique
+          - not_null
+      - name: status
+        data_tests:
+          - accepted_values:
+              values: ['completed', 'returned', 'pending']</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:info}}</div>
+  <div>
+    <div class="callout__title">dbt version note</div>
+    <p>Since dbt 1.8 the preferred key is <code>data_tests</code>. <code>tests</code> is the legacy alias and still resolves, so both appear in the wild — pick one and stay consistent.</p>
+  </div>
+</div>
+
+<h2>relationships: guard your joins</h2>
+
+<p>The <code>relationships</code> test catches orphaned foreign keys — an order whose <code>customer_id</code> never appears in the customers dimension. Those rows silently drop out of inner joins and quietly shrink your revenue numbers.</p>
+
+{{diagram:tests|Tests guard each model: only data that passes the assertions flows on to the marts.}}
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_models.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">models:
+  - name: fct_orders
+    columns:
+      - name: customer_id
+        data_tests:
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id</code></pre>
+</div>
+
+<p>The test fails if any non-null <code>customer_id</code> in <code>fct_orders</code> is missing from <code>dim_customers.customer_id</code>. NULLs are ignored by design, so pair it with <code>not_null</code> if the key is also required.</p>
+
+{{diagram:lineage|A relationships test validates the links between nodes, so a missing parent row cannot silently break a downstream join.}}
+
+<h2>accepted_values: lock down a domain</h2>
+
+<p>Status and category columns drift over time. <code>accepted_values</code> makes the allowed set explicit, so a typo or an unexpected upstream value fails the build instead of leaking into reports.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_models.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">columns:
+  - name: status
+    data_tests:
+      - accepted_values:
+          values: ['completed', 'returned', 'pending']
+          severity: warn          # log it, don't fail the run
+  - name: order_month
+    data_tests:
+      - accepted_values:
+          values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+          quote: false            # numbers, not strings</code></pre>
+</div>
+
+<p><code>quote: false</code> tells dbt not to wrap numeric values in quotes. <code>severity: warn</code> downgrades a failure to a warning — useful while you clean up legacy data. Add <code>where:</code> to test only a subset of rows.</p>
+
+<h2>Singular tests: custom SQL</h2>
+
+<p>When your rule doesn't fit a generic test, drop a SQL file in <code>tests/</code>. It should select the rows that <em>violate</em> the rule. Any returned row fails the test, so this one asserts that revenue is never negative:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">tests/assert_positive_revenue.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    order_id,
+    line_total
+from {{ ref('fct_orders') }}
+where line_total &lt; 0</code></pre>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:wand-sparkles}}</div>
+  <div>
+    <div class="callout__title">Write tests that fail loudly</div>
+    <p>A good failure query selects the offending rows with the columns a human needs to debug them — IDs, dates and the bad value. dbt prints those rows in the test output.</p>
+  </div>
+</div>
+
+<h2>dbt_utils: power tests</h2>
+
+<p>The four built-ins don't cover everything. The <strong>dbt_utils</strong> package adds tests for multi-column keys, value ranges and completeness. Install it once, then reference the namespaced test names.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">packages.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">packages:
+  - package: dbt-labs/dbt_utils
+    version: ["&gt;=1.0.0", "&lt;2.0.0"]</code></pre>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt deps</code></pre>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_models.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">models:
+  - name: fct_order_lines
+    columns:
+      - name: line_total
+        data_tests:
+          - dbt_utils.expression_is_true:
+              expression: "&gt;= 0"
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: ['order_id', 'product_sku']</code></pre>
+</div>
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>dbt_utils test</th><th>What it catches</th></tr></thead>
+    <tbody>
+      <tr><td><code>unique_combination_of_columns</code></td><td>Duplicate composite keys (grain violations)</td></tr>
+      <tr><td><code>expression_is_true</code></td><td>A boolean rule, e.g. <code>line_total &gt;= 0</code></td></tr>
+      <tr><td><code>at_least_one</code></td><td>A column where every value is NULL or filtered out</td></tr>
+      <tr><td><code>not_empty_string</code></td><td>Blank strings that slip past <code>not_null</code></td></tr>
+      <tr><td><code>recency</code></td><td>A table that has not received fresh rows recently</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Running tests</h2>
+
+<div class="tryit">
+  <div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">dbt test                          # run every test
+dbt test --select fct_orders      # one model's tests
+dbt test --select source:ecommerce # tests on a source
+dbt build                         # run + test + snapshot + seed, in DAG order
+dbt test --store-failures         # persist failing rows to a table</code></pre>
+    </div>
+    <p>dbt lists each test as it runs. A green <code>PASS</code> means the query returned no rows; a red <code>FAIL</code> prints the number of failing rows. <code>--store-failures</code> writes them to a table you can query to see exactly what broke.</p>
+  </div>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Tests only run when you ask them to</div>
+    <p><code>dbt test</code> runs tests and nothing else. <code>dbt run</code> builds models and skips tests. Use <code>dbt build</code> when you want both, executed together in dependency order — a failing test stops downstream models from building.</p>
+  </div>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>Every dbt test is a query: zero rows means pass, any row means fail.</span></li>
+  <li>{{icon:circle-check}}<span>The four built-in generic tests are <code>not_null</code>, <code>unique</code>, <code>accepted_values</code> and <code>relationships</code>.</span></li>
+  <li>{{icon:circle-check}}<span><code>relationships</code> enforces referential integrity from a child column to a parent column and ignores NULLs.</span></li>
+  <li>{{icon:circle-check}}<span>Custom singular tests live in <code>tests/</code> and select the rows that should never exist.</span></li>
+  <li>{{icon:circle-check}}<span>Add the <code>dbt_utils</code> package in <code>packages.yml</code>, run <code>dbt deps</code>, then use tests like <code>unique_combination_of_columns</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Use <code>dbt build</code> to run and test together; a test failure blocks downstream models.</span></li>
+</ul>
+
+<div class="quiz" data-explain="relationships checks that each value in a child column exists in a parent column — referential integrity. That is exactly the orphaned foreign key case.">
+  <div class="quiz__q">{{icon:circle-help}} <span>An order references a <code>customer_id</code> that is missing from <code>dim_customers</code>. Which test catches it?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span><code>accepted_values</code></span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span><code>relationships</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span><code>not_null</code></span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Tests tell you the data is valid <em>now</em>. In <a href="./4-snapshots.html">Snapshots for SCD Type 2</a> you'll learn how to keep every version of a changing row so you can query what the data looked like in the past.</p>
+  </div>
+</div>

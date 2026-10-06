@@ -1,0 +1,214 @@
+<p class="lead">Before dbt, analytics SQL lived in a strange place: queries pasted into BI tools, stored procedures nobody dared touch, and the same transformation copied into a dozen dashboards. dbt gave that SQL an engineering workflow — version control, tests, documentation and a dependency graph. This lesson is the map of the whole course.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">The one-sentence definition</div>
+    <p>dbt is a <strong>SQL compiler and workflow tool</strong>: you write <code>SELECT</code> statements as files, and dbt turns them into tables and views in your warehouse — in the right order, tested, and documented.</p>
+  </div>
+</div>
+
+<h2>The problem dbt solves</h2>
+
+<p>Data teams used to transform data with a pile of disconnected habits. Each one felt fine in isolation, and together they made the warehouse impossible to trust.</p>
+
+<div class="cards">
+  <div class="card reveal"><div class="card__icon">{{icon:file-code}}</div><div class="card__title">SQL scattered everywhere</div><p class="card__text">Logic spread across dashboards, notebooks and spreadsheets — with no history and no owner.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:copy}}</div><div class="card__title">Copy-paste transformations</div><p class="card__text">The same join rewritten in ten files, drifting apart quietly until the numbers disagree.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:triangle-alert}}</div><div class="card__title">"Works on my machine"</div><p class="card__text">A change breaks a downstream table and nobody finds out until a dashboard looks wrong.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:circle-help}}</div><div class="card__title">No documentation</div><p class="card__text">"Why does this column exist?" becomes archaeology instead of a lookup.</p></div>
+</div>
+
+<div class="callout callout--story">
+  <div class="callout__icon">{{icon:quote}}</div>
+  <div>
+    <div class="callout__title">The dbt philosophy</div>
+    <p>“Build, test and document data transformations with the same tools software engineers already use.” — dbt Labs</p>
+  </div>
+</div>
+
+<h2>What dbt actually is</h2>
+
+<p>You write models — plain <code>.sql</code> files, each containing one <code>SELECT</code>. dbt compiles those files, resolves the references between them, and runs the results against your warehouse.</p>
+
+{{diagram:pipeline|dbt sits between your raw tables and your dashboards, turning SQL files into a governed transformation layer.}}
+
+<div class="split mt-2">
+  <div class="split__body stack">
+    <h3 style="margin-top:0">Four verbs describe everything dbt does</h3>
+    <ol>
+      <li><strong>Organize</strong> SQL into modular, version-controlled models.</li>
+      <li><strong>Transform</strong> raw data into business-ready layers.</li>
+      <li><strong>Test</strong> every step automatically and fail early.</li>
+      <li><strong>Document</strong> lineage so anyone can trace a number home.</li>
+    </ol>
+  </div>
+  <div class="split__visual">
+    <div class="table-wrap">
+      <table class="table--compare">
+        <thead><tr><th>Block</th><th>What it is</th><th>File</th></tr></thead>
+        <tbody>
+          <tr><td>{{icon:hammer}} Model</td><td>A SQL file that transforms data</td><td><code>.sql</code></td></tr>
+          <tr><td>{{icon:database}} Source</td><td>A raw upstream table dbt only observes</td><td><code>_sources.yml</code></td></tr>
+          <tr><td>{{icon:sprout}} Seed</td><td>A small CSV committed to the repo</td><td><code>.csv</code></td></tr>
+          <tr><td>{{icon:flask-conical}} Test</td><td>An assertion about your data</td><td><code>_models.yml</code></td></tr>
+          <tr><td>{{icon:puzzle}} Macro</td><td>Reusable SQL, like a function</td><td><code>macros/*.sql</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<h2>A model, in full</h2>
+
+<p>This is a complete dbt model. It reads a source table, renames a couple of columns, computes a line total, and keeps only completed orders.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/first_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">-- One model = one SELECT. dbt handles the CREATE.
+select
+    order_id,
+    customer_id,
+    product_sku,
+    quantity,
+    unit_price * quantity as line_total,
+    order_date,
+    cast(status as text) as order_status
+from {{ source('ecommerce', 'orders') }}
+where status = 'completed'</code></pre>
+</div>
+
+<p>Two things make this more than a saved query:</p>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:search}}</div>
+  <div>
+    <div class="callout__title">{{icon:braces}} source() declares where raw data lives</div>
+    <p><code>{{ source(...) }}</code> points at a table dbt doesn't own. dbt records the dependency, can check the source's freshness, and shows it in the lineage graph.</p>
+  </div>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:git-branch}}</div>
+  <div>
+    <div class="callout__title">{{icon:git-branch}} ref() builds the dependency graph</div>
+    <p><code>{{ ref(...) }}</code> points at another model. dbt uses it to work out build order and to know what to rebuild when something changes.</p>
+  </div>
+</div>
+
+<h2>Models reference each other: the DAG</h2>
+
+<p>When one model references another, dbt assembles a <strong>Directed Acyclic Graph</strong> (DAG) and runs the nodes in dependency order. You never schedule them by hand.</p>
+
+{{diagram:first-model|first_orders() depends on the source, and order_summary() depends on first_orders().}}
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Parse</div><p class="step__body">dbt reads every model and macro, and finds all <code>ref()</code> and <code>source()</code> calls.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Compile</div><p class="step__body">Jinja is rendered and the references are swapped for real table names, producing pure SQL.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Execute</div><p class="step__body">dbt walks the DAG top to bottom and runs each model against your warehouse.</p></div></div>
+</div>
+
+<h2>Where dbt fits in the stack</h2>
+
+<p>dbt does the <strong>T</strong> in ELT — after data has been extracted and loaded. It does not move data between systems; it transforms data already sitting in your warehouse.</p>
+
+<div class="table-wrap">
+  <table class="table--compare table--zebra">
+    <thead><tr><th>Stage</th><th>What happens</th><th>Typical tools</th></tr></thead>
+    <tbody>
+      <tr><td>Extract &amp; load</td><td>Data is pulled from source systems into the warehouse</td><td>Airbyte, Fivetran, custom scripts</td></tr>
+      <tr class="highlight"><td>{{icon:git-branch}} Transform</td><td>Raw tables are cleaned, joined and aggregated into marts</td><td><strong>dbt</strong></td></tr>
+      <tr><td>Analyze</td><td>BI tools query the marts</td><td>Metabase, Looker, Tableau</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">dbt is not an orchestrator</div>
+    <p>dbt runs the transformations you ask it to. Scheduling “run dbt every morning at 6am” is a job for Airflow, Dagster, Prefect or a cron job — dbt just executes the models.</p>
+  </div>
+</div>
+
+<h2>How dbt compares</h2>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Approach</th><th>Version control</th><th>Tests</th><th>Lineage</th><th>Docs</th></tr></thead>
+    <tbody>
+      <tr><td>Hand-written SQL scripts</td><td class="cell-bad">Manual</td><td class="cell-bad">None</td><td class="cell-bad">None</td><td class="cell-bad">None</td></tr>
+      <tr><td>Stored procedures</td><td class="cell-ok">Partial</td><td class="cell-bad">Ad-hoc</td><td class="cell-bad">None</td><td class="cell-bad">None</td></tr>
+      <tr><td>dbt</td><td class="cell-good">Git-native</td><td class="cell-good">Built-in</td><td class="cell-good">Automatic DAG</td><td class="cell-good">Generated site</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Meet the sample project</h2>
+
+<p>We use one dataset throughout the course: a small e-commerce business. It has customers and orders — enough to exercise every concept without drowning in schema.</p>
+
+<div class="grid-2 mt-2">
+  <div>
+    <h4>Raw customers</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>id</th><th>name</th><th>region</th><th>status</th></tr></thead>
+        <tbody>
+          <tr><td>C01</td><td>Alice Chen</td><td>North America</td><td class="cell-good">Active</td></tr>
+          <tr><td>C02</td><td>Bob Wilson</td><td>Europe</td><td class="cell-good">Active</td></tr>
+          <tr><td>C03</td><td>Charlie Park</td><td>Asia-Pacific</td><td class="cell-ok">Churned</td></tr>
+          <tr><td>C04</td><td>Diana Ross</td><td>North America</td><td class="cell-good">Active</td></tr>
+          <tr><td>C05</td><td>Erik Lindgren</td><td>Europe</td><td>New</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div>
+    <h4>Raw orders</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>order_id</th><th>customer</th><th>qty</th><th>unit_price</th></tr></thead>
+        <tbody>
+          <tr><td>O01</td><td>C01</td><td>2</td><td>$899.99</td></tr>
+          <tr><td>O02</td><td>C02</td><td>3</td><td>$49.99</td></tr>
+          <tr><td>O03</td><td>C01</td><td>1</td><td>$249.99</td></tr>
+          <tr><td>O04</td><td>C03</td><td>5</td><td>$12.99</td></tr>
+          <tr><td>O05</td><td>C04</td><td>1</td><td>$899.99</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>dbt is a SQL compiler plus a workflow: you write <code>SELECT</code>, it builds and runs the warehouse objects.</span></li>
+  <li>{{icon:circle-check}}<span><code>ref()</code> and <code>source()</code> turn loose queries into a dependency graph.</span></li>
+  <li>{{icon:circle-check}}<span>dbt does the <strong>T</strong> in ELT — it transforms data already loaded in the warehouse.</span></li>
+  <li>{{icon:circle-check}}<span>Models, sources, seeds, tests and macros are the five building blocks you'll meet first.</span></li>
+</ul>
+
+<div class="quiz" data-explain="dbt transforms data that is already in the warehouse — it does not extract or load it.">
+  <div class="quiz__q">{{icon:circle-help}} <span>Which part of an ELT pipeline does dbt handle?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>Extract — pulling data from APIs</span></button>
+    <button class="quiz__option" type="button"><span class="mark">B</span><span>Load — writing data into the warehouse</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">C</span><span>Transform — reshaping data already in the warehouse</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Time to get your hands dirty. In <a href="./2-installation.html">Setup &amp; Installation</a> you'll install dbt with DuckDB and run your first command.</p>
+  </div>
+</div>

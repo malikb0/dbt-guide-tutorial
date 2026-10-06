@@ -1,0 +1,335 @@
+<p class="lead">A CI/CD pipeline is a promise: nothing reaches production until it has been built and tested on an isolated copy of the warehouse. This lesson writes a real <code>.github/workflows/dbt.yml</code> — a slim CI job that rebuilds only what a pull request changed, plus a deploy job on <code>main</code> that produces the manifest every future PR defers to.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:workflow}}</div>
+  <div>
+    <div class="callout__title">CI verifies, CD promotes</div>
+    <p><strong>Continuous integration</strong> proves a change is safe: compile it, build it on a throwaway schema, run its tests. <strong>Continuous delivery</strong> takes the artifact that passed and publishes it to production. Keep the two jobs separate so a failed test can never deploy.</p>
+  </div>
+</div>
+
+<h2>The shape of a dbt CI pipeline</h2>
+
+<p>Every pull request triggers the same loop. A developer opens a PR, GitHub runs the workflow on a fresh runner, and the result appears as a check on the PR. If the check is red, the merge button is effectively blocked.</p>
+
+{{diagram:cicd|A pull request is verified on its own schema; only after merge does the deploy job touch production.}}
+
+<div class="flow">
+  <span class="flow__node">{{icon:git-pull-request}}Pull request</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:package}}Install deps</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:list-checks}}Build state:modified+</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:circle-check}}Tests pass</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:git-merge}}Merge to main</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:rocket}}Deploy</span>
+</div>
+
+<h2>A complete workflow file</h2>
+
+<p>Two jobs live in one file. The <code>ci</code> job runs on pull requests; the <code>deploy</code> job runs on pushes to <code>main</code> and uploads the production manifest that later PRs compare against.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">.github/workflows/dbt.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">name: dbt CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: dbt-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DBT_PROFILES_DIR: .
+
+jobs:
+  ci:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    env:
+      DBT_TARGET: ci
+      DBT_CI_SCHEMA: ci_pr_${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout the pull request
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dbt and the adapter
+        run: pip install -r requirements.txt
+
+      - name: Install dbt packages
+        run: dbt deps
+
+      - name: Find the latest production run
+        id: prod-run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_ID=$(gh run list --workflow dbt.yml --branch main \
+            --status success --limit 1 --json databaseId \
+            --jq '.[0].databaseId')
+          if [ "$RUN_ID" = "null" ]; then RUN_ID=""; fi
+          echo "run-id=$RUN_ID" &gt;&gt; "$GITHUB_OUTPUT"
+
+      - name: Download the production manifest
+        if: steps.prod-run.outputs.run-id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: prod-manifest
+          path: ./prod-state
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.prod-run.outputs.run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build modified models and their children
+        run: |
+          if [ -f ./prod-state/manifest.json ]; then
+            dbt build --select state:modified+ \
+              --defer --state ./prod-state --target ci
+          else
+            echo "No production manifest yet — running a full CI build."
+            dbt build --target ci
+          fi
+
+      - name: Upload CI artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts
+          path: |
+            target/manifest.json
+            target/run_results.json
+          if-no-files-found: warn
+
+  deploy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      DBT_TARGET: prod
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dbt and the adapter
+        run: pip install -r requirements.txt
+
+      - name: Install dbt packages
+        run: dbt deps
+
+      - name: Build production
+        run: dbt build --target prod
+
+      - name: Publish the production manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-manifest
+          path: target/manifest.json
+          if-no-files-found: error</code></pre>
+</div>
+
+<p>Pair it with a tiny pinned requirements file so the pip cache has something to key on:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">requirements.txt</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt-duckdb&gt;=1.8</code></pre>
+</div>
+
+<h2>What each step is doing</h2>
+
+<div class="table-wrap">
+  <table class="table--compare table--zebra">
+    <thead><tr><th>Step</th><th>Why it is there</th></tr></thead>
+    <tbody>
+      <tr><td><code>on: pull_request</code> / <code>push</code></td><td>PRs trigger verification; merges to <code>main</code> trigger deployment. Two events, two jobs.</td></tr>
+      <tr><td><code>concurrency</code></td><td>Cancels an in-flight run when a new commit lands on the same branch, saving runner minutes.</td></tr>
+      <tr><td><code>actions/checkout@v4</code></td><td>Pulls the exact commit under test onto the runner.</td></tr>
+      <tr><td><code>actions/setup-python@v5</code></td><td>Installs Python 3.12 and enables pip caching keyed on <code>requirements.txt</code>.</td></tr>
+      <tr><td><code>pip install -r requirements.txt</code></td><td>Installs <code>dbt-core</code> plus the DuckDB adapter so the CLI exists.</td></tr>
+      <tr><td><code>dbt deps</code></td><td>Downloads the packages declared in <code>packages.yml</code> before compilation.</td></tr>
+      <tr><td>Find / download prod manifest</td><td>Fetches the manifest produced by the last successful <code>main</code> deploy so this run has a baseline to compare against.</td></tr>
+      <tr><td><code>dbt build --select state:modified+</code></td><td>Builds only the changed nodes and their downstream children, then runs their tests in DAG order.</td></tr>
+      <tr><td>Upload artifacts</td><td>Saves <code>manifest.json</code> and <code>run_results.json</code> for debugging and for the PR comment shown later.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Understanding the three flags that make slim CI work</h2>
+
+<p>The magic is entirely in <code>--select state:modified+</code>, <code>--defer</code> and <code>--state</code>. Together they rebuild the smallest safe slice of the DAG.</p>
+
+{{diagram:cache|dbt compares the current project to the state manifest: only modified models and their children rebuild.}}
+
+<div class="grid-2 mt-2">
+  <div>
+    <h3>state:modified+</h3>
+    <p>dbt hashes each node's config and compiled SQL. <code>state:modified</code> selects the nodes whose hash changed since the state manifest was written; the trailing <code>+</code> adds every downstream child that depends on them. That is the set that must be rebuilt to keep the warehouse correct.</p>
+  </div>
+  <div>
+    <h3>--defer --state</h3>
+    <p><code>--state</code> points at the directory holding the production <code>manifest.json</code>. With <code>--defer</code>, any <code>ref()</code> to an upstream model that is <em>not</em> part of the selection resolves to the production relation instead of a table that does not exist in the CI schema. You build the delta; dbt reads the rest from prod.</p>
+  </div>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:shield-check}}</div>
+  <div>
+    <div class="callout__title">Why a dedicated CI schema?</div>
+    <p>The job sets <code>DBT_CI_SCHEMA=ci_pr_&lt;number&gt;</code>, so every pull request builds into its own schema (for example <code>analytics.ci_pr_412</code>). Reviewers can inspect the result, and one PR can never overwrite another — or production.</p>
+  </div>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:database}}</div>
+  <div>
+    <div class="callout__title">Reality check: deferral needs a shared warehouse</div>
+    <p>Slim CI assumes every target connects to the <em>same</em> database. On Snowflake or BigQuery, <code>--defer</code> reads unchanged models straight from the persistent production schema. A local DuckDB file on an ephemeral runner has no production data to defer to, so treat the flags here as the mechanism to learn and run a full <code>dbt build</code> when working purely locally.</p>
+  </div>
+</div>
+
+<div class="tryit"><div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">dbt ls --select state:modified+ --state ./prod-state</code></pre>
+    </div>
+    <p><code>dbt ls</code> prints exactly which nodes the slim build would select. When a selection feels too large or too small, run this before you push.</p>
+  </div>
+</div>
+
+<h2>Wiring the profiles and the target</h2>
+
+<p>The workflow sets <code>DBT_PROFILES_DIR: .</code>, so dbt reads a committed <code>profiles.yml</code> from the repo root. Each target declares its own schema and thread count; the CI schema comes from the environment variable the job set.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">profiles.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">dbt_shop:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: dev.duckdb
+      schema: analytics
+      threads: 4
+    ci:
+      type: duckdb
+      path: ci.duckdb
+      schema: "{{ env_var('DBT_CI_SCHEMA', 'ci_local') }}"
+      threads: 4
+    prod:
+      type: duckdb
+      path: prod.duckdb
+      schema: analytics
+      threads: 8</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:key}}</div>
+  <div>
+    <div class="callout__title">Never commit warehouse credentials</div>
+    <p>DuckDB needs none, which is why it is perfect for learning. For Snowflake, BigQuery or Postgres, keep secrets in <a href="https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions" target="_blank" rel="noopener">GitHub encrypted secrets</a> and read them in <code>profiles.yml</code> with <code>{{ env_var('SNOWFLAKE_PASSWORD') }}</code>. The profile file itself can stay in git when it contains only env references.</p>
+  </div>
+</div>
+
+<h2>CI then CD: two jobs, one workflow</h2>
+
+<p>The <code>deploy</code> job is deliberately separate. It runs only on <code>push</code> to <code>main</code>, builds the full project with <code>--target prod</code>, and publishes <code>target/manifest.json</code> as the <code>prod-manifest</code> artifact. Every later pull request downloads that artifact and measures itself against it.</p>
+
+{{diagram:environments|The CI schema is disposable; production is the artifact that the next pull request defers to.}}
+
+<div class="timeline">
+  <div class="tl-item"><div class="tl-item__time">T+0</div><strong>PR opened or updated</strong><p>The <code>ci</code> job checks out the branch, installs dependencies, and downloads the last production manifest.</p></div>
+  <div class="tl-item"><div class="tl-item__time">T+1</div><strong>Delta build + tests</strong><p><code>dbt build --select state:modified+ --defer --state</code> rebuilds the changed slice on <code>ci_pr_&lt;number&gt;</code> and runs its tests.</p></div>
+  <div class="tl-item"><div class="tl-item__time">T+2</div><strong>Merge to main</strong><p>The <code>deploy</code> job builds the full project against production and uploads a fresh manifest artifact.</p></div>
+</div>
+
+<h2>Commenting results back on the pull request</h2>
+
+<p>The <code>ci</code> job already requests <code>pull-requests: write</code>. To leave a readable summary, parse <code>target/run_results.json</code> after the build and post it with the preinstalled GitHub CLI. The step must run with <code>if: always()</code> so it still comments when tests fail.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">.github/workflows/dbt.yml (excerpt)</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">      - name: Comment run results on the PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "dbt CI: $(jq '.results | length' target/run_results.json) nodes executed."</code></pre>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>A pull request should trigger a build and test run on an isolated schema before it can merge.</span></li>
+  <li>{{icon:circle-check}}<span><code>state:modified+</code> rebuilds only changed nodes and their downstream children.</span></li>
+  <li>{{icon:circle-check}}<span><code>--defer</code> plus <code>--state ./prod-state</code> lets unbuilt upstream references read from production.</span></li>
+  <li>{{icon:circle-check}}<span>Each PR gets its own CI schema so runs cannot collide with each other or with prod.</span></li>
+  <li>{{icon:circle-check}}<span>The deploy job publishes <code>manifest.json</code> as the baseline the next PR compares against.</span></li>
+  <li>{{icon:circle-check}}<span>Credentials belong in GitHub secrets and <code>{{ env_var(...) }}</code>, never in the committed profile.</span></li>
+</ul>
+
+<div class="quiz" data-explain="--defer resolves references to models that are not being built in this run to their production relations, using the manifest supplied by --state.">
+  <div class="quiz__q">{{icon:circle-help}} <span>In a slim CI run, what does the <code>--defer</code> flag accomplish?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>It skips all tests for unchanged models</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>It points <code>ref()</code> to production for upstream models not selected in this run</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>It rebuilds every model from scratch</span></button>
+    <button class="quiz__option" type="button"><span class="mark">D</span><span>It stores credentials for the CI schema</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>CI keeps small changes cheap. In <a href="./4-performance-optimization.html">Performance Tuning at Scale</a> you'll make big data cheap too — partitioning, incremental strategies, threads and <code>--full-refresh</code>.</p>
+  </div>
+</div>

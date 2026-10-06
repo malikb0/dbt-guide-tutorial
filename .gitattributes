@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff2 binary
+
+# keep generated HTML out of "linguist" language stats
+*.html linguist-generated
+assets/js/topics.js linguist-generated
+assets/js/vendor/prism-bundle.js linguist-vendored
+assets/img/icons.svg linguist-generated
+assets/fonts/* linguist-vendored

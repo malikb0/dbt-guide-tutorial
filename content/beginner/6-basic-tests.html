@@ -1,0 +1,211 @@
+<p class="lead">A dashboard built on untested data is a confident lie. dbt makes testing part of the normal workflow: declare a rule next to a column, run <code>dbt test</code>, and the build fails the moment the data stops obeying it. This lesson covers the four built-in generic tests and how to read a failure.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:shield-check}}</div>
+  <div>
+    <div class="callout__title">Tests are assertions, not dashboards</div>
+    <p>Each test compiles to a query that returns the rows which <em>break</em> the rule. No rows returned means the test passes. That is the whole idea — and it is why a test can fail loudly without any extra tooling.</p>
+  </div>
+</div>
+
+<h2>Where tests attach</h2>
+
+<p>A test attaches to a model and, usually, to one of its columns. You declare it in YAML beside the model, so the rule lives in version control with the code it protects.</p>
+
+{{diagram:first-model|The model we built in the previous lesson — first_orders() — is exactly the kind of node you guard with tests.}}
+
+<h2>The four generic tests</h2>
+
+<p>dbt ships four generic tests out of the box. Most data-quality rules you need at the start are combinations of these.</p>
+
+{{diagram:tests|Only passing data moves on to the mart; a failing test stops the build before the bad rows spread.}}
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Test</th><th>Rule</th><th>Typical use</th></tr></thead>
+  <tbody>
+    <tr><td><code>not_null</code></td><td>The column has no nulls</td><td>Primary keys and required fields</td></tr>
+    <tr><td><code>unique</code></td><td>Each value appears once</td><td>Primary keys, emails, SKUs</td></tr>
+    <tr><td><code>accepted_values</code></td><td>Every value is in an allowed list</td><td>Status and category columns</td></tr>
+    <tr class="highlight"><td><code>relationships</code></td><td>Every value exists in another model's column</td><td>Foreign keys, referential integrity</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:info}}</div>
+  <div>
+    <div class="callout__title">Advanced tests come from packages</div>
+    <p>Anything beyond these four — like <code>unique_combination_of_columns</code> — comes from the <code>dbt_utils</code> package. Add it to <code>packages.yml</code> and run <code>dbt deps</code> to install it. We cover that in the intermediate track.</p>
+  </div>
+</div>
+
+<h2>Add tests in YAML</h2>
+
+<p>Declare tests under each column in a <code>_models.yml</code> file. The example below uses all four built-ins.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_models.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+models:
+  - name: first_orders
+    description: "Completed orders with customer details and a line total."
+    columns:
+      - name: order_id
+        description: "Unique order identifier"
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              to: source('ecommerce', 'orders')
+              field: order_id
+
+      - name: customer_id
+        description: "FK to the customers table"
+        tests:
+          - not_null
+
+      - name: order_status
+        description: "Order lifecycle status"
+        tests:
+          - accepted_values:
+              values: ['completed', 'pending', 'returned']</code></pre>
+</div>
+
+<h2>Run the tests</h2>
+
+<p><code>dbt test</code> runs every test in the project. Use <code>--select</code> to narrow the run while you iterate.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt test                              # every test
+dbt test --select first_orders        # only this model's tests
+dbt test --select source:ecommerce    # tests declared on sources</code></pre>
+</div>
+
+<div class="tryit"><div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">dbt test --select first_orders</code></pre>
+    </div>
+    <p>Expected: a line per test, each marked <code>PASS</code>, ending with <code>Done. PASS=5 WARN=0 ERROR=0 SKIP=0</code>. A <code>FAIL</code> means the test found rows that break the rule.</p>
+  </div>
+</div>
+
+<h2>What dbt runs under the hood</h2>
+
+<p>Generic tests are just macros that emit SQL. Knowing the shape of that SQL makes failures easy to interpret.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">generated test SQL</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">-- not_null(order_id): any row here is a failure
+select *
+from "ecommerce"."main"."first_orders"
+where order_id is null
+
+-- unique(order_id): any row here is a failure
+select
+    order_id,
+    count(*) as n_records
+from "ecommerce"."main"."first_orders"
+group by order_id
+having count(*) &gt; 1</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:search}}</div>
+  <div>
+    <div class="callout__title">The old page had these backwards</div>
+    <p><code>not_null</code> does <em>not</em> group and count; it simply selects rows where the column is null. <code>unique</code> is the one that groups and uses <code>having count(*) &gt; 1</code>. Reading the compiled query in <code>target/compiled/</code> shows exactly which rule fired.</p>
+  </div>
+</div>
+
+<h2>Read a failure and fix it</h2>
+
+<p>Suppose two orders share the same <code>order_id</code>. The <code>unique</code> test returns those two rows, so dbt reports a failure and names the test.</p>
+
+<div class="table-wrap"><table class="table--zebra">
+  <thead><tr><th>Test</th><th>Model</th><th>Column</th><th>Result</th><th>What it means</th></tr></thead>
+  <tbody>
+    <tr><td>not_null</td><td>first_orders</td><td>order_id</td><td class="cell-good">PASS</td><td>No null identifiers</td></tr>
+    <tr><td>unique</td><td>first_orders</td><td>order_id</td><td class="cell-bad">FAIL</td><td>2 rows share an order_id</td></tr>
+    <tr><td>accepted_values</td><td>first_orders</td><td>order_status</td><td class="cell-good">PASS</td><td>Only allowed statuses present</td></tr>
+    <tr><td>relationships</td><td>first_orders</td><td>order_id</td><td class="cell-good">PASS</td><td>Every key exists upstream</td></tr>
+  </tbody>
+</table></div>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Read the failing query</div><p class="step__body">dbt prints how many rows it found. Open the compiled test in <code>target/compiled/</code> to see the exact rule.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">See the offending rows</div><p class="step__body">Run <code>dbt test --select first_orders --store-failures</code>. dbt writes the failing rows to a table so you can query them directly.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Fix the model, not the test</div><p class="step__body">Add a deduplication or filter to the model, re-run <code>dbt build</code>, and confirm the test now passes. Only weaken a test if the business rule genuinely changed.</p></div></div>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Do not silence a test to make the build green</div>
+    <p>A failing test is information. Deleting it hides the problem and erodes trust in every other test. Fix the data or deliberately update the assertion — and say why in the pull request.</p>
+  </div>
+</div>
+
+<h2>run, test or build?</h2>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>dbt run</code></td><td>Builds models only — no tests, no seeds</td></tr>
+    <tr><td><code>dbt test</code></td><td>Runs tests only, against whatever is already built</td></tr>
+    <tr><td><code>dbt seed</code></td><td>Loads CSV seeds only</td></tr>
+    <tr class="highlight"><td><code>dbt build</code></td><td>Runs seeds, models, snapshots and tests together, in DAG order</td></tr>
+  </tbody>
+</table></div>
+
+<p><code>dbt build</code> is the command to reach for in production and CI: it interleaves each model with its tests, so a broken model fails before its downstream dependencies ever run.</p>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>dbt ships four generic tests: <code>not_null</code>, <code>unique</code>, <code>accepted_values</code> and <code>relationships</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Declare tests under each column in <code>_models.yml</code>; they live in Git with the model.</span></li>
+  <li>{{icon:circle-check}}<span>A test passes when its query returns zero rows; any returned row is a failure.</span></li>
+  <li>{{icon:circle-check}}<span><code>dbt test --store-failures</code> writes the offending rows to a table so you can inspect them.</span></li>
+  <li>{{icon:circle-check}}<span><code>dbt build</code> runs seeds, models, snapshots and tests in DAG order — the safest default.</span></li>
+</ul>
+
+<div class="quiz" data-explain="unique_combination_of_columns is not built into dbt; it ships with the dbt_utils package, installed via packages.yml and dbt deps.">
+  <div class="quiz__q">{{icon:circle-help}} <span>Which of these tests comes from the <code>dbt_utils</code> package rather than dbt itself?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span><code>relationships</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">B</span><span><code>accepted_values</code></span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">C</span><span><code>unique_combination_of_columns</code></span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:graduation-cap}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>That is the beginner track complete. Head back to the <a href="./index.html">Foundations hub</a> to review the path, or move on to the Intermediate level for materializations, macros and snapshots.</p>
+  </div>
+</div>

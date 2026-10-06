@@ -1,0 +1,292 @@
+<p class="lead">A customer moves from North America to Europe. A plan changes from <code>basic</code> to <code>pro</code>. If your model only stores the current value, the past is gone forever. dbt <strong>snapshots</strong> solve that by keeping every version of a row over time — the pattern known as Slowly Changing Dimension Type 2.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">A snapshot is history you didn't have to build</div>
+    <p>You point a snapshot at a table that changes, tell dbt which rows identify a version and how to detect a change, and dbt maintains the validity windows for you. No triggers, no merge logic to hand-write.</p>
+  </div>
+</div>
+
+<h2>Why history is hard: the SCD types</h2>
+
+<p>The problem of a changing dimension has three classic answers. Only one keeps the full history.</p>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Type</th><th>What happens to the old value</th><th>History</th></tr></thead>
+    <tbody>
+      <tr><td>Type 1</td><td>Overwritten in place</td><td class="cell-bad">Lost</td></tr>
+      <tr class="highlight"><td>{{icon:history}} Type 2</td><td>Kept as a separate row with validity dates</td><td class="cell-good">Complete</td></tr>
+      <tr><td>Type 3</td><td>Kept in a second "previous value" column</td><td class="cell-ok">One step back</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>How a snapshot works</h2>
+
+<p>A snapshot is a <code>.sql</code> file in <code>snapshots/</code> wrapped in <code>{% snapshot %}</code> tags. Inside, you write a normal <code>SELECT</code> against the source or a model, plus a <code>config()</code> that explains how to detect changes.</p>
+
+{{diagram:snapshot|Snapshots keep every version of a row so you can query history (SCD Type 2).}}
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">snapshots/customers_snapshot.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% snapshot customers_snapshot %}
+
+    {{ config(
+        target_schema='snapshots',
+        unique_key='id',
+        strategy='timestamp',
+        updated_at='updated_at'
+    ) }}
+
+    select
+        id,
+        name,
+        email,
+        region,
+        status,
+        updated_at
+    from {{ source('ecommerce', 'customers') }}
+
+{% endsnapshot %}</code></pre>
+</div>
+
+<p>Four config keys do the work:</p>
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>target_schema</code></td><td>Where dbt writes the snapshot table (often a dedicated <code>snapshots</code> schema)</td></tr>
+      <tr><td><code>unique_key</code></td><td>The column that identifies one entity across all its versions, e.g. <code>id</code></td></tr>
+      <tr><td><code>strategy</code></td><td><code>timestamp</code> or <code>check</code> — how dbt decides a version changed</td></tr>
+      <tr><td><code>updated_at</code> / <code>check_cols</code></td><td>The timestamp to watch, or the columns to compare</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Timestamp strategy</h2>
+
+<p>Use this when the source table has a reliable <code>updated_at</code> column that changes whenever the row does. dbt compares that timestamp to the last snapshot and records a new version when it is newer.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">snapshots/customers_snapshot.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% snapshot customers_snapshot %}
+    {{ config(
+        target_schema='snapshots',
+        unique_key='id',
+        strategy='timestamp',
+        updated_at='updated_at'
+    ) }}
+
+    select id, name, email, region, status, updated_at
+    from {{ source('ecommerce', 'customers') }}
+{% endsnapshot %}</code></pre>
+</div>
+
+<p>The <code>updated_at</code> column must be part of the <code>SELECT</code>. Two warnings matter: the strategy only sees changes that bump the timestamp, and if the timestamp updates without any other column changing, dbt still records a new version.</p>
+
+<h2>Check strategy</h2>
+
+<p>When there is no dependable timestamp, compare column values instead. Pass the columns you care about to <code>check_cols</code>; dbt creates a new version whenever any of them differ from the stored row.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">snapshots/customers_snapshot.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% snapshot customers_snapshot %}
+    {{ config(
+        target_schema='snapshots',
+        unique_key='id',
+        strategy='check',
+        check_cols=['email', 'region']
+    ) }}
+
+    select id, name, email, region, status
+    from {{ source('ecommerce', 'customers') }}
+{% endsnapshot %}</code></pre>
+</div>
+
+<p>Use <code>check_cols='all'</code> to compare every column. The trade-off is compute: dbt has to compare the full set of columns on every run, which is slower than a timestamp comparison.</p>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">The config key is <code>check_cols</code></div>
+    <p>It is easy to write <code>checked_columns</code> by mistake — that key does nothing. The correct name is <code>check_cols</code>, and it accepts a list or the string <code>'all'</code>.</p>
+  </div>
+</div>
+
+<h2>Timestamp vs check</h2>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th></th><th>{{icon:clock}} Timestamp</th><th>{{icon:scan-line}} Check</th></tr></thead>
+    <tbody>
+      <tr><td>Detects change by</td><td><code>updated_at</code> moving forward</td><td>Comparing listed columns</td></tr>
+      <tr><td>Requires</td><td>A trustworthy <code>updated_at</code></td><td>Nothing extra</td></tr>
+      <tr><td>Speed</td><td class="cell-good">Fast — one column</td><td class="cell-ok">Slower — full comparison</td></tr>
+      <tr><td>Best for</td><td>Clean sources with audit timestamps</td><td>Sources with no reliable timestamp</td></tr>
+      <tr><td>Watch out for</td><td>Timestamps that don't actually update</td><td>Unlisted column changes going unnoticed</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>The columns dbt adds</h2>
+
+<p>Whichever strategy you choose, dbt appends metadata columns that describe each version.</p>
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>Column</th><th>What it holds</th></tr></thead>
+    <tbody>
+      <tr><td><code>dbt_scd_id</code></td><td>A unique key for this specific version of the row</td></tr>
+      <tr><td><code>dbt_updated_at</code></td><td>The source <code>updated_at</code> value (timestamp strategy)</td></tr>
+      <tr><td><code>dbt_valid_from</code></td><td>When this version became the current one</td></tr>
+      <tr><td><code>dbt_valid_to</code></td><td>When it stopped being current — <code>NULL</code> for the active row</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:info}}</div>
+  <div>
+    <div class="callout__title">Open-ended validity</div>
+    <p>In current dbt versions the active row's <code>dbt_valid_to</code> is <code>NULL</code>. Some older setups use a far-future sentinel such as <code>9999-12-31</code>. Write queries that treat both — for example with <code>coalesce(dbt_valid_to, '9999-12-31')</code>. Newer dbt can also flag disappeared rows with <code>dbt_is_deleted</code> when you enable <code>invalidate_hard_deletes: true</code>.</p>
+  </div>
+</div>
+
+<h2>Querying history</h2>
+
+<p>Once the snapshot exists you reference it like any other node with <code>ref()</code>. The current state is simply the row whose validity window is still open.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/dim_customers.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">-- Current version of every customer
+select
+    id,
+    name,
+    email,
+    region
+from {{ ref('customers_snapshot') }}
+where dbt_valid_to is null</code></pre>
+</div>
+
+<p>To answer "what did this look like on a given date?", filter to the version whose window contains that date:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/customers_as_of.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    id,
+    name,
+    email,
+    region
+from {{ ref('customers_snapshot') }}
+where dbt_valid_from &lt;= timestamp '2024-06-01'
+  and coalesce(dbt_valid_to, timestamp '9999-12-31') &gt; timestamp '2024-06-01'</code></pre>
+</div>
+
+<p>And to see the full change log for one customer, order by the validity start:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/customer_change_log.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    id,
+    region,
+    status,
+    dbt_valid_from,
+    dbt_valid_to
+from {{ ref('customers_snapshot') }}
+where id = 'C01'
+order by dbt_valid_from</code></pre>
+</div>
+
+<p>In a dimensional model, a snapshot is exactly what belongs underneath a <code>dim_customers</code> table: one row per version, ready to join to your facts for point-in-time analysis.</p>
+
+{{diagram:marts|Snapshot history becomes a slowly changing dimension that facts can join to for point-in-time analysis.}}
+
+<h2>Running snapshots</h2>
+
+<div class="tryit">
+  <div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">dbt snapshot                              # run every snapshot
+dbt snapshot --select customers_snapshot  # one snapshot
+dbt build                                 # run + test + snapshot + seed, in DAG order</code></pre>
+    </div>
+    <p>The first run records one version per row. Run it again after the source changes and dbt closes the old version by setting <code>dbt_valid_to</code>, then inserts the new one. <code>dbt build</code> includes snapshots automatically.</p>
+  </div>
+</div>
+
+<div class="callout callout--danger">
+  <div class="callout__icon">{{icon:lock}}</div>
+  <div>
+    <div class="callout__title">Snapshots are append-only history — be careful</div>
+    <p>Snapshots are stateful: each run builds on the last. Changing the query or strategy after the fact can invalidate existing history, and there is no automatic rewind. Treat the snapshot definition as stable and review changes before they ship.</p>
+  </div>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>Snapshots give you SCD Type 2 history: every version of a changing row with validity dates.</span></li>
+  <li>{{icon:circle-check}}<span>Define a snapshot in <code>snapshots/*.sql</code> with <code>{% snapshot name %} … {% endsnapshot %}</code> and a <code>config()</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Use <code>strategy='timestamp'</code> with <code>updated_at</code>, or <code>strategy='check'</code> with <code>check_cols</code> (not <code>checked_columns</code>).</span></li>
+  <li>{{icon:circle-check}}<span>dbt adds <code>dbt_valid_from</code>, <code>dbt_valid_to</code>, <code>dbt_scd_id</code> and <code>dbt_updated_at</code>; the active row has a <code>NULL</code> <code>dbt_valid_to</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Query current rows with <code>where dbt_valid_to is null</code>, or a point in time with a validity-window filter and <code>coalesce</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Run snapshots with <code>dbt snapshot</code>; <code>dbt build</code> runs them alongside models and tests.</span></li>
+</ul>
+
+<div class="quiz" data-explain="When there is no reliable updated_at column, check compares the columns you list in check_cols and records a new version when any of them change.">
+  <div class="quiz__q">{{icon:circle-help}} <span>A source table has no dependable <code>updated_at</code> column. Which snapshot config do you use?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span><code>strategy='timestamp', updated_at='id'</code></span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span><code>strategy='check', check_cols=['email', 'region']</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span><code>strategy='check', checked_columns=['email']</code></span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>You now have views, macros, tests and history. In <a href="./5-ci-cd.html">CI/CD Pipelines Overview</a> you'll see how to run all of it automatically — on every pull request and on a schedule.</p>
+  </div>
+</div>

@@ -1,0 +1,267 @@
+<p class="lead">dbt is a Python program, so setup is short: install the adapter, tell dbt which database to use, and run one command to prove the connection works. We use <strong>DuckDB</strong> — a full analytics database that runs in-process, with no server, no account and no cloud bill to manage.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">Why DuckDB for this course?</div>
+    <p>DuckDB is an <strong>embedded OLAP database</strong>: the whole warehouse lives in a single <code>.duckdb</code> file and runs inside your Python process. That means nothing to provision on a server and nothing to pay for — but the SQL and the dbt workflow are the same ones you would use against Snowflake, BigQuery or Redshift.</p>
+  </div>
+</div>
+
+<h2>Prerequisites</h2>
+
+<p>You need a terminal, Python, and a way to install Python packages. Everything else arrives with the adapter.</p>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Requirement</th><th>Minimum</th><th>Why you need it</th></tr></thead>
+  <tbody>
+    <tr><td>{{icon:file-code}} Python</td><td class="cell-good">3.9+</td><td>dbt-core itself is a Python package</td></tr>
+    <tr><td>{{icon:package}} pip</td><td class="cell-good">latest</td><td>Installs dbt and the DuckDB adapter</td></tr>
+    <tr><td>{{icon:database}} DuckDB engine</td><td class="cell-good">bundled</td><td>Installed automatically with <code>dbt-duckdb</code></td></tr>
+    <tr><td>{{icon:terminal}} DuckDB CLI</td><td class="cell-ok">optional</td><td>Convenient for querying your output tables</td></tr>
+    <tr><td>{{icon:git-branch}} Git</td><td class="cell-ok">optional</td><td>Version-control your models and seeds</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Install the toolchain</h2>
+
+<p>Always install dbt inside a <strong>virtual environment</strong> so it cannot clash with other Python projects. The <code>dbt-duckdb</code> package pulls in dbt-core <em>and</em> the DuckDB engine in a single step.</p>
+
+{{diagram:install|One adapter install gives you dbt-core, the DuckDB driver, a profile and a database file.}}
+
+<div class="tabs">
+  <div class="tabs__list" role="tablist">
+    <button class="tab" type="button" aria-selected="true">{{icon:terminal}} Linux / macOS</button>
+    <button class="tab" type="button">{{icon:terminal}} Windows (PowerShell)</button>
+  </div>
+  <div class="tabs__panel">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash"># 1. Create an isolated environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. Install dbt-core + the DuckDB adapter together
+pip install --upgrade "dbt-duckdb&gt;=1.8"
+
+# 3. Confirm it worked
+dbt --version</code></pre>
+    </div>
+  </div>
+  <div class="tabs__panel">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">PowerShell</span>
+        <span class="codeblock__lang">powershell</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-powershell"># 1. Open PowerShell (not CMD), then create the environment
+py -m venv .venv
+
+# 2. Activate it — note the different path
+.venv\Scripts\Activate.ps1
+
+# 3. Install dbt-core + the DuckDB adapter
+pip install --upgrade "dbt-duckdb&gt;=1.8"
+
+# 4. Confirm it worked
+py -m dbt --version</code></pre>
+    </div>
+  </div>
+</div>
+
+<div class="tryit"><div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">dbt --version</code></pre>
+    </div>
+    <p>Expected: a <code>Core</code> section showing a version like <code>1.9.0</code>, then a <code>Plugins</code> section listing <code>dbt-duckdb</code>. If you see “command not found”, the virtual environment is not active — re-run the <code>activate</code> step.</p>
+  </div>
+</div>
+
+<h2>Create the project the right way</h2>
+
+<p>This is the step the original guide got wrong. <code>dbt init &lt;name&gt;</code> <strong>creates</strong> a folder called <code>&lt;name&gt;</code> for you — so you must not create that folder first.</p>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Move to the parent directory</div><p class="step__body">Go where you keep projects. Do <em>not</em> <code>mkdir</code> the project folder.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Run dbt init</div><p class="step__body">dbt asks which adapter to use; choose <strong>duckdb</strong>. It scaffolds the folder and writes a starter profile.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Enter the project</div><p class="step__body">The new folder is ready to run.</p></div></div>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># ✅ Correct: dbt creates the folder named ecommerce_analytics
+cd ~/projects
+dbt init ecommerce_analytics
+cd ecommerce_analytics</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">The nesting bug</div>
+    <p>The old page ran <code>mkdir ecommerce-analytics &amp;&amp; cd ecommerce-analytics</code> and then <code>dbt init ecommerce-analytics</code>. Because <code>dbt init</code> also creates that folder, the project ended up nested one level too deep at <code>ecommerce-analytics/ecommerce-analytics/</code>. Run <code>dbt init</code> from the parent directory and never pre-create the folder.</p>
+  </div>
+</div>
+
+<h2>Connect dbt to DuckDB with profiles.yml</h2>
+
+<p>dbt reads connection details from <strong><code>profiles.yml</code></strong>, kept <em>outside</em> the project so credentials never land in Git. By default dbt looks in <code>~/.dbt/</code>; pass <code>--profiles-dir .</code> to use a copy that sits next to <code>dbt_project.yml</code>. The profile name must match the <code>profile:</code> key in <code>dbt_project.yml</code>.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">~/.dbt/profiles.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml"># The profile name must match `profile:` in dbt_project.yml
+ecommerce_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "ecommerce.duckdb"   # file is created on first run
+      threads: 4</code></pre>
+</div>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Key</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>type</code></td><td>Selects the adapter — <code>duckdb</code> for this course</td></tr>
+    <tr><td><code>path</code></td><td>Location of the DuckDB database file dbt should open</td></tr>
+    <tr><td><code>threads</code></td><td>How many models dbt may run in parallel</td></tr>
+    <tr><td><code>target</code></td><td>Which output (here <code>dev</code>) is active for this run</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">profiles-dir is not a project key</div>
+    <p>Putting <code>profiles-dir: "."</code> inside <code>dbt_project.yml</code> does nothing — it is a <strong>command-line flag</strong> (or the <code>DBT_PROFILES_DIR</code> environment variable). Use <code>dbt debug --profiles-dir .</code> when your profile lives in the project folder.</p>
+  </div>
+</div>
+
+<p>Here is the matching project file, with correct keys (<code>+materialized</code>, not <code>+materialization</code>):</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">dbt_project.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">name: 'ecommerce_analytics'
+version: '1.0.0'
+config-version: 2
+profile: 'ecommerce_analytics'   # must exist in profiles.yml
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+target-path: "target"
+
+models:
+  ecommerce_analytics:
+    +materialized: view           # default for new models</code></pre>
+</div>
+
+<h2>Verify the connection</h2>
+
+<p><code>dbt debug</code> checks your Python, the adapter, and the warehouse connection, then reports on each one.</p>
+
+<div class="tryit"><div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash"># Uses ~/.dbt/profiles.yml
+dbt debug
+
+# If profiles.yml sits next to dbt_project.yml:
+dbt debug --profiles-dir .</code></pre>
+    </div>
+    <p>Expected: every check reports <code>OK</code> and the run ends with <code>All checks passed!</code>. A failing connection check almost always means the profile name and <code>profile:</code> do not match.</p>
+  </div>
+</div>
+
+{{diagram:pipeline|With a working profile, the very same project can grow from one model into the full source → model → BI pipeline.}}
+
+<h2>Know your project layout</h2>
+
+<p><code>dbt init</code> scaffolds a standard structure. Learn these folders now and every later lesson will feel familiar.</p>
+
+<div class="table-wrap"><table class="table--zebra">
+  <thead><tr><th>Path</th><th>Purpose</th><th>Type</th></tr></thead>
+  <tbody>
+    <tr><td><code>dbt_project.yml</code></td><td>Project name, paths and default config</td><td>YAML</td></tr>
+    <tr><td><code>profiles.yml</code></td><td>Connection settings (kept out of Git)</td><td>YAML</td></tr>
+    <tr><td><code>models/</code></td><td>Your SQL transformations</td><td><code>.sql</code></td></tr>
+    <tr><td><code>seeds/</code></td><td>Small committed CSV files</td><td><code>.csv</code></td></tr>
+    <tr><td><code>snapshots/</code></td><td>History-tracking definitions</td><td><code>.sql</code></td></tr>
+    <tr><td><code>macros/</code></td><td>Reusable Jinja functions</td><td><code>.sql</code></td></tr>
+    <tr><td><code>tests/</code></td><td>Singular (hand-written) tests</td><td><code>.sql</code></td></tr>
+    <tr><td><code>target/</code></td><td>Compiled SQL and run artifacts</td><td>generated</td></tr>
+    <tr><td><code>logs/</code></td><td>Run logs</td><td>generated</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Troubleshooting common setup problems</h2>
+
+<div class="accordion">
+  <details class="acc"><summary>dbt: command not found</summary><div class="acc__body"><p>The virtual environment is not active, or dbt was installed globally under a different Python. Run the <code>activate</code> command for your shell and re-check with <code>dbt --version</code>.</p></div></details>
+  <details class="acc"><summary>Could not find profile named 'ecommerce_analytics'</summary><div class="acc__body"><p>The profile key in <code>profiles.yml</code> differs from <code>profile:</code> in <code>dbt_project.yml</code>, or dbt is looking in the wrong folder. Confirm the spelling and try <code>dbt debug --profiles-dir .</code>.</p></div></details>
+  <details class="acc"><summary>RuntimeError: Unable to import adapter duckdb</summary><div class="acc__body"><p>The <code>dbt-duckdb</code> package is missing from the active environment. Activate the venv and run <code>pip install --upgrade "dbt-duckdb&gt;=1.8"</code>.</p></div></details>
+  <details class="acc"><summary>My models disappear between runs</summary><div class="acc__body"><p>You are probably using an in-memory database. Set <code>path</code> to a real file such as <code>ecommerce.duckdb</code> so the tables persist.</p></div></details>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>Install everything together with <code>pip install "dbt-duckdb&gt;=1.8"</code> inside a virtual environment.</span></li>
+  <li>{{icon:circle-check}}<span><code>dbt init &lt;name&gt;</code> creates the project folder — never <code>mkdir</code> it first.</span></li>
+  <li>{{icon:circle-check}}<span>DuckDB connects through <code>profiles.yml</code> with <code>type: duckdb</code> and a <code>path</code> to a <code>.duckdb</code> file.</span></li>
+  <li>{{icon:circle-check}}<span>The profile name must match the <code>profile:</code> key in <code>dbt_project.yml</code>.</span></li>
+  <li>{{icon:circle-check}}<span><code>dbt debug</code> is the fastest way to prove the whole chain works.</span></li>
+</ul>
+
+<div class="quiz" data-explain="Because dbt init also creates the folder, running it inside a folder of the same name results in ecommerce-analytics/ecommerce-analytics/.">
+  <div class="quiz__q">{{icon:circle-help}} <span>You run <code>mkdir shop &amp;&amp; cd shop</code>, then <code>dbt init shop</code>. What happens?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>dbt errors out and refuses to continue</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>dbt creates <code>shop/shop</code> — the project is nested one level too deep</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>dbt overwrites the existing <code>shop</code> folder in place</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Your environment is ready. In <a href="./3-core-concepts.html">Core Concepts</a> you'll meet the four building blocks every dbt project is made of.</p>
+  </div>
+</div>

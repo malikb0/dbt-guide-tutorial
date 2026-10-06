@@ -1,0 +1,186 @@
+<p class="lead">Your DAG usually stops at the last dbt model — but the value keeps flowing into a dashboard, a metric, a notebook or an app. Exposures declare those downstream consumers inside your dbt project, so the lineage graph finally answers the question every stakeholder asks: <em>which model powers this number?</em></p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">An exposure is a declaration, not a transformation</div>
+    <p>An exposure does not run, test or store anything. It is a YAML node that names a downstream use — a dashboard, analysis, notebook, ML model or application — and records which dbt models and metrics it depends on. dbt uses it to draw lineage, to document the consumer and to power selection like <code>+exposure:name</code>.</p>
+  </div>
+</div>
+
+<h2>The missing link in your DAG</h2>
+
+<p>Without exposures, the graph ends at the mart. You can see that <code>fct_orders</code> feeds nothing, because the dashboard lives in another tool. An exposure adds that external node, so the chain is complete from raw table to business surface.</p>
+
+{{diagram:lineage|Exposures extend the DAG past the last model to the dashboards and metrics that consume it.}}
+
+<h2>What an exposure declares</h2>
+
+<p>A handful of properties describe each consumer. Only <code>name</code>, <code>type</code> and <code>owner</code> are required.</p>
+
+<div class="table-wrap"><table class="table--compare table--zebra">
+  <thead><tr><th>Property</th><th>Required?</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>name</code></td><td>Yes</td><td>Unique snake_case identifier used in selection and docs.</td></tr>
+    <tr><td><code>type</code></td><td>Yes</td><td>One of <code>dashboard</code>, <code>notebook</code>, <code>analysis</code>, <code>ml</code> or <code>application</code>.</td></tr>
+    <tr><td><code>owner</code></td><td>Yes</td><td>A <code>name</code> or <code>email</code>; additional properties are allowed.</td></tr>
+    <tr><td><code>depends_on</code></td><td>Expected</td><td>List of refable nodes: <code>ref()</code>, <code>source()</code> or <code>metric()</code>.</td></tr>
+    <tr><td><code>label</code></td><td>No</td><td>Human-friendly name that may contain spaces and capitals.</td></tr>
+    <tr><td><code>url</code></td><td>No</td><td>Adds a “View this exposure” link in the generated docs site.</td></tr>
+    <tr><td><code>maturity</code></td><td>No</td><td>Confidence level: <code>high</code>, <code>medium</code> or <code>low</code>.</td></tr>
+    <tr><td><code>description</code>, <code>tags</code>, <code>meta</code></td><td>No</td><td>Documentation and organization, same as other resources.</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title"><code>metric</code> is not an exposure type</div>
+    <p>It is tempting to write <code>type: metric</code>, but the accepted types are <code>dashboard</code>, <code>notebook</code>, <code>analysis</code>, <code>ml</code> and <code>application</code>. To link an exposure to a metric, keep a normal type and reference the metric inside <code>depends_on</code> with <code>metric('count_orders')</code>.</p>
+  </div>
+</div>
+
+<h2>Writing an exposure</h2>
+
+<p>Exposures live under an <code>exposures:</code> key in any <code>.yml</code> file in your <code>models/</code> directory. Here an e-commerce team maps a revenue dashboard and a lifetime-value analysis.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/exposures.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+exposures:
+  - name: weekly_revenue
+    label: Weekly revenue dashboard
+    type: dashboard
+    maturity: high
+    url: https://bi.example.com/dashboards/weekly-revenue
+    description: Revenue by region for the weekly business review.
+    owner:
+      name: Analytics Team
+      email: analytics@example.com
+    depends_on:
+      - ref('fct_orders')
+      - ref('dim_customers')
+      - source('ecommerce', 'orders')
+    tags: ['finance']
+
+  - name: customer_ltv_analysis
+    label: Customer lifetime value analysis
+    type: analysis
+    maturity: medium
+    description: Notebook exploring lifetime value by region.
+    owner:
+      name: Data Science Team
+      email: data@example.com
+    depends_on:
+      - ref('dim_customers')</code></pre>
+</div>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Create a YAML file</div><p class="step__body">Add an <code>exposures:</code> key to any <code>.yml</code> file under <code>models/</code>. A single <code>exposures.yml</code> is fine to start.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Name the consumer</div><p class="step__body">Set a snake_case <code>name</code>, a human <code>label</code>, a valid <code>type</code>, and the owning team’s <code>email</code>.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Point at the final models</div><p class="step__body">List the marts the tool reads in <code>depends_on</code> using <code>ref()</code>, <code>source()</code> or <code>metric()</code>.</p></div></div>
+  <div class="step reveal"><div class="step__marker">4</div><div><div class="step__title">Generate docs and select</div><p class="step__body">Run <code>dbt docs generate</code> to see the new node, then target it with <code>+exposure:name</code>.</p></div></div>
+</div>
+
+<h2>Linking to metrics</h2>
+
+<p>On projects that use the dbt Semantic Layer, an exposure can also depend on a <strong>metric</strong>. Metrics are defined elsewhere in the project; the exposure simply records that the downstream tool reads them.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/exposures.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">exposures:
+  - name: revenue_tile
+    label: Revenue tile
+    type: dashboard
+    owner:
+      name: Finance Analytics
+      email: finance-analytics@example.com
+    depends_on:
+      - metric('total_revenue')
+      - ref('dim_regions')</code></pre>
+</div>
+
+<p>Adding a <code>metric()</code> dependency does not compute the metric — it records a lineage edge so the docs graph, and selection, include it.</p>
+
+<h2>Where exposures show up</h2>
+
+<p>Once declared, exposures become first-class nodes you can select and document. They are especially useful in build commands: selecting everything that feeds one report is one short expression.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># Rebuild and test everything upstream of one exposure
+dbt build --select +exposure:weekly_revenue
+
+# Just the tests that guard that exposure's models
+dbt test --select +exposure:weekly_revenue
+
+# List every declared exposure
+dbt ls --resource-type exposure
+
+# Render the docs site, including the exposure page and DAG
+dbt docs generate</code></pre>
+</div>
+
+{{diagram:pipeline|Exposures extend the documented pipeline from raw sources through models to the place the number is actually read.}}
+
+<h2>Why it matters</h2>
+
+<div class="cards">
+  <div class="card reveal"><div class="card__icon">{{icon:network}}</div><div class="card__title">Impact analysis</div><p class="card__text">Before changing a model, see exactly which dashboards and analyses will be affected.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:eye}}</div><div class="card__title">Trust and context</div><p class="card__text">Descriptions and maturity tell consumers how reliable a metric really is.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:trophy}}</div><div class="card__title">Clear ownership</div><p class="card__text">Every dashboard has a named owner, so questions reach a person, not a void.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:target}}</div><div class="card__title">Targeted builds</div><p class="card__text">Refresh only the models behind one report with <code>+exposure:name</code>.</p></div>
+</div>
+
+<h2>Guidelines</h2>
+
+<div class="accordion">
+  <details class="acc"><summary>Don’t declare every ad-hoc query</summary><div class="acc__body"><p>Exposures are for consumers worth tracking: dashboards, published metrics, production ML features. One-off exploration does not need a YAML node.</p></div></details>
+  <details class="acc"><summary>Keep <code>depends_on</code> pointed at the final model</summary><div class="acc__body"><p>List the marts the tool actually reads, not every intermediate model in the chain — dbt resolves the rest of the lineage through <code>ref()</code>.</p></div></details>
+  <details class="acc"><summary>Use <code>label</code> for humans, <code>name</code> for code</summary><div class="acc__body"><p><code>name</code> must be snake_case and unique; <code>label</code> can be “Weekly revenue dashboard”. Docs show the label; selection uses the name.</p></div></details>
+  <details class="acc"><summary>Keep owners current</summary><div class="acc__body"><p>An exposure owned by a departed team member is worse than no exposure. Review ownership periodically; a name or email is required.</p></div></details>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>An exposure declares a <strong>downstream consumer</strong> — it documents lineage, it does not run or store data.</span></li>
+  <li>{{icon:circle-check}}<span>Valid types are <code>dashboard</code>, <code>notebook</code>, <code>analysis</code>, <code>ml</code> and <code>application</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Use <code>depends_on</code> with <code>ref()</code>, <code>source()</code> or <code>metric()</code> to draw the edges.</span></li>
+  <li>{{icon:circle-check}}<span>Select everything upstream of one report with <code>+exposure:name</code> in <code>dbt build</code> or <code>dbt test</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Exposures appear as nodes in the graph and as pages in <code>dbt docs generate</code>.</span></li>
+</ul>
+
+<div class="quiz" data-explain="Exposure types are dashboard, notebook, analysis, ml and application; metric dependencies are expressed with metric() inside depends_on.">
+  <div class="quiz__q">{{icon:circle-help}} <span>How do you connect an exposure to a dbt metric?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>Set <code>type: metric</code> on the exposure.</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>Keep a valid <code>type</code> and add <code>metric('name')</code> under <code>depends_on</code>.</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>Add the metric’s SQL as a column of the exposure.</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Exposures close the loop at the far end of the DAG. Now head to the <a href="../advanced/1-sources.html">Advanced level</a>, where you’ll make the raw end first-class with source freshness, tests and contracts.</p>
+  </div>
+</div>

@@ -1,0 +1,207 @@
+<p class="lead">dbt has a deliberately small vocabulary. Four words — <strong>model</strong>, <strong>source</strong>, <strong>seed</strong> and <strong>test</strong> — describe almost everything you will ever do. Learn what each one is and the rest of dbt is just detail.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">The whole pipeline in one line</div>
+    <p>Sources (raw tables) and seeds (committed CSVs) feed models, models produce the tables your BI tool reads, and tests stand guard at every step. That is the entire architecture.</p>
+  </div>
+</div>
+
+<h2>The four building blocks</h2>
+
+<div class="cards">
+  <div class="card reveal"><div class="card__icon">{{icon:hammer}}</div><div class="card__title">Model</div><p class="card__text">A <code>.sql</code> file with one <code>SELECT</code>. dbt compiles it and creates a table or view. This is where most of your work happens.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:satellite}}</div><div class="card__title">Source</div><p class="card__text">A raw upstream table dbt does <em>not</em> manage. You declare it once so dbt can track lineage and freshness.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:sprout}}</div><div class="card__title">Seed</div><p class="card__text">A small CSV file committed to the repository. dbt loads it into the warehouse as a table.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:flask-conical}}</div><div class="card__title">Test</div><p class="card__text">An assertion about your data, such as “this column is never null”. dbt fails the build when data breaks the rule.</p></div>
+</div>
+
+<h2>Models — the transformations you write</h2>
+
+<p>A model is one <code>.sql</code> file containing a single <code>SELECT</code>. You do not write <code>CREATE TABLE</code>; dbt wraps your query in the right DDL, in the right schema, in the right order.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/first_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">-- One model = one SELECT. dbt provides the CREATE.
+select
+    o.order_id,
+    o.customer_id,
+    o.product_sku,
+    o.quantity,
+    o.unit_price,
+    o.quantity * o.unit_price as line_total,
+    cast(o.order_date as date) as order_day
+from {{ source('ecommerce', 'orders') }} as o
+where o.status = 'completed'</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Never hard-code a table name</div>
+    <p>Always reference another model as <code>{{ ref('my_model') }}</code>. Writing <code>from my_model</code> works by accident on your machine but hides the dependency from dbt — so it will not rebuild downstream models or draw the edge in the lineage graph.</p>
+  </div>
+</div>
+
+<h2>Sources — raw tables dbt only observes</h2>
+
+<p>Sources are the tables an extract-and-load tool already put in your warehouse. You never transform them in place; you declare them in a YAML file and read them with <code>{{ source(...) }}</code>.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_sources.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+sources:
+  - name: ecommerce            # the group you name in source()
+    schema: main               # where the raw tables live
+    tables:
+      - name: orders
+        description: "One row per order line, loaded by the EL job."
+        columns:
+          - name: order_id
+            description: "Order identifier"
+          - name: customer_id
+            description: "FK to the customers table"</code></pre>
+</div>
+
+<p>Then in a model: <code>select * from {{ source('ecommerce', 'orders') }}</code>. dbt records the dependency, can test the source, and can check how fresh it is.</p>
+
+<h2>Seeds — small CSVs under version control</h2>
+
+<p>A seed is the one place where dbt accepts something other than SQL. It is a CSV checked into the repo and loaded with <code>dbt seed</code> — ideal for lookup tables like country codes or pricing tiers.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">seeds/country_codes.csv</span>
+    <span class="codeblock__lang">csv</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code>code,country_name,region
+US,United States,North America
+CA,Canada,North America
+GB,United Kingdom,Europe
+DE,Germany,Europe
+JP,Japan,Asia-Pacific</code></pre>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash">dbt seed                       # load every seed
+dbt seed --select country_codes  # load just one</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:info}}</div>
+  <div>
+    <div class="callout__title">A seed is referenced with ref()</div>
+    <p>Because dbt loads a seed itself, you read it with <code>{{ ref('country_codes') }}</code>, not <code>{{ source(...) }}</code>. Sources are for tables dbt does not create; seeds are for tables it does.</p>
+  </div>
+</div>
+
+<h2>Tests — assertions about your data</h2>
+
+<p>A test states a rule that must always hold. Generic tests are declared in YAML next to the model; dbt compiles each into a query that returns the rows breaking the rule. Zero rows means the test passes.</p>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Generic test</th><th>The rule it checks</th></tr></thead>
+  <tbody>
+    <tr><td><code>not_null</code></td><td>The column contains no nulls</td></tr>
+    <tr><td><code>unique</code></td><td>Every value in the column appears exactly once</td></tr>
+    <tr><td><code>accepted_values</code></td><td>Every value belongs to an allowed list</td></tr>
+    <tr><td><code>relationships</code></td><td>Every value exists in another model's column (a foreign key)</td></tr>
+  </tbody>
+</table></div>
+
+<p class="muted">We cover tests fully in <a href="./6-basic-tests.html">Basic Tests</a>.</p>
+
+<h2>ref() and source() build the DAG</h2>
+
+<p>Every <code>ref()</code> and <code>source()</code> call is an edge in a <strong>Directed Acyclic Graph</strong>. dbt reads those edges and works out the build order for you — you never schedule models by hand.</p>
+
+{{diagram:first-model|The source feeds first_orders(); ref() then makes order_summary() depend on it.}}
+
+<div class="flow">
+  <span class="flow__node">{{icon:satellite}}ecommerce.orders</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:hammer}}first_orders</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:chart-line}}order_summary</span>
+</div>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Parse</div><p class="step__body">dbt finds every <code>ref()</code> and <code>source()</code> and builds the graph.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Compile</div><p class="step__body">Jinja is rendered and references are swapped for real table names.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">Execute</div><p class="step__body">dbt walks the graph top to bottom and runs each model.</p></div></div>
+</div>
+
+<h2>Layering a project: staging, intermediate, marts</h2>
+
+<p>Real projects do not build one giant query. They stack small models into layers, each with a clear job. This keeps logic reusable and makes the lineage readable.</p>
+
+{{diagram:layers|Sources land as bronze, staging models clean them, and gold marts serve the business.}}
+
+<div class="table-wrap"><table class="table--zebra">
+  <thead><tr><th>Layer</th><th>Naming</th><th>Its job</th></tr></thead>
+  <tbody>
+    <tr><td>Staging</td><td><code>stg_orders</code></td><td>One staging model per source: rename, cast, standardise. No joins.</td></tr>
+    <tr><td>Intermediate</td><td><code>int_orders_joined</code></td><td>Reusable joins and business logic that more than one mart needs.</td></tr>
+    <tr><td>Marts</td><td><code>fct_orders</code>, <code>dim_customers</code></td><td>Business-ready tables that BI tools and dashboards query.</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Which block do I need?</h2>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>I have…</th><th>Use a…</th><th>Defined in</th><th>Command</th></tr></thead>
+  <tbody>
+    <tr><td>A table already loaded in the warehouse</td><td>Source</td><td><code>_sources.yml</code></td><td class="muted">none</td></tr>
+    <tr><td>A transformation to run</td><td>Model</td><td><code>.sql</code> file</td><td><code>dbt run</code></td></tr>
+    <tr><td>A small static lookup list</td><td>Seed</td><td><code>.csv</code> file</td><td><code>dbt seed</code></td></tr>
+    <tr class="highlight"><td>A rule the data must obey</td><td>Test</td><td><code>_models.yml</code></td><td><code>dbt test</code></td></tr>
+  </tbody>
+</table></div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span><strong>Models</strong> are SQL transformations; <strong>sources</strong> are raw tables dbt only observes; <strong>seeds</strong> are committed CSVs; <strong>tests</strong> are assertions.</span></li>
+  <li>{{icon:circle-check}}<span>Reference models with <code>{{ ref('name') }}</code> and raw tables with <code>{{ source('group', 'table') }}</code> — never a bare table name.</span></li>
+  <li>{{icon:circle-check}}<span>A seed is read with <code>ref()</code> because dbt creates it; a source is read with <code>source()</code> because dbt does not.</span></li>
+  <li>{{icon:circle-check}}<span><code>ref()</code> and <code>source()</code> turn loose queries into a dependency graph dbt executes in order.</span></li>
+  <li>{{icon:circle-check}}<span>Layer projects as staging → intermediate → marts so logic stays reusable and readable.</span></li>
+</ul>
+
+<div class="quiz" data-explain="Seeds are small static CSVs committed to the repo and loaded with dbt seed — exactly the right tool for lookup data like country codes.">
+  <div class="quiz__q">{{icon:circle-help}} <span>Your project needs a fixed list of country codes that the team wants to code-review in Git. What should it be?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>A source, loaded from the CRM</span></button>
+    <button class="quiz__option" type="button"><span class="mark">B</span><span>A model that hard-codes the values</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">C</span><span>A seed CSV in the <code>seeds/</code> folder</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Enough theory. In <a href="./4-your-first-model.html">Your First Model</a> you'll write one, compile it, run it and inspect the output.</p>
+  </div>
+</div>

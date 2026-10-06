@@ -1,0 +1,178 @@
+<p class="lead">A dbt project only earns its keep when someone runs it on every change. CI/CD is the automation layer around your models: continuous integration verifies each pull request before it merges, and continuous delivery ships the result to production. This page is the conceptual map — the advanced level walks through a complete GitHub Actions workflow.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">Two ideas, one pipeline</div>
+    <p><strong>Continuous integration (CI)</strong> runs on a branch or pull request: compile the project, build and test it somewhere safe, and block the merge if anything fails. <strong>Continuous delivery/deployment (CD)</strong> runs after the merge: build the artifact and promote it to the environments it belongs in.</p>
+  </div>
+</div>
+
+<h2>Why automate a dbt pipeline</h2>
+
+<p>Running <code>dbt build</code> by hand works until two people change the same model, a source column is renamed, or a test starts failing silently. CI/CD replaces “did you remember to run it?” with a guarantee.</p>
+
+<div class="cards">
+  <div class="card reveal"><div class="card__icon">{{icon:git-pull-request}}</div><div class="card__title">Catch breakage early</div><p class="card__text">Every pull request compiles and tests, so a broken <code>ref()</code> or failed test never reaches <code>main</code>.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:package}}</div><div class="card__title">Repeatable environments</div><p class="card__text">The runner installs the same Python, adapter and packages every time — no “works on my machine”.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:flask-conical}}</div><div class="card__title">Tests gate the merge</div><p class="card__text">Data quality becomes a merge requirement instead of an afterthought noticed by a stakeholder.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:rocket}}</div><div class="card__title">Predictable deploys</div><p class="card__text">The same build that passed CI is the one promoted to production — no manual re-runs.</p></div>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">dbt Core is not a scheduler</div>
+    <p>dbt executes the commands you give it and then exits. “Run every morning at 06:00” is the job of GitHub Actions schedules, cron, Airflow, Dagster or dbt Cloud jobs — not dbt itself.</p>
+  </div>
+</div>
+
+<h2>CI vs CD, side by side</h2>
+
+<p>They are often spoken of as one word, but they answer different questions and run at different moments.</p>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Question</th><th>CI — continuous integration</th><th>CD — continuous delivery</th></tr></thead>
+  <tbody>
+    <tr><td>When does it run?</td><td>On every push or pull request</td><td>After a change is merged</td></tr>
+    <tr><td>What is the goal?</td><td>Prove the change is safe</td><td>Make the change available</td></tr>
+    <tr><td>Where does it build?</td><td>A throwaway/CI schema or database</td><td>The target environment (staging, production)</td></tr>
+    <tr><td>Typical command</td><td><code>dbt build</code> against a CI target</td><td><code>dbt run</code> / <code>dbt build</code> against prod</td></tr>
+    <tr><td>Failure means…</td><td>The merge is blocked</td><td>Production is unchanged; alert the team</td></tr>
+  </tbody>
+</table></div>
+
+{{diagram:cicd|CI verifies the change in isolation, then CD promotes the verified result to the environments it serves.}}
+
+<h2>What runs, and when</h2>
+
+<p>Most teams follow the same rhythm. The triggers differ, but the sequence is stable.</p>
+
+<div class="timeline">
+  <div class="tl-item"><div class="tl-item__time">On pull request</div><strong>Compile, build and test in a preview schema</strong><p>Install dependencies with <code>dbt deps</code>, then run <code>dbt build</code> against a CI target that writes to a disposable schema. Any failed test blocks the merge.</p></div>
+  <div class="tl-item"><div class="tl-item__time">On merge to main</div><strong>Build the deployable artifact</strong><p>The same project is built again, producing <code>manifest.json</code> and <code>run_results.json</code> in <code>target/</code>. Those artifacts describe exactly what was compiled and run.</p></div>
+  <div class="tl-item"><div class="tl-item__time">On release</div><strong>Promote to staging, then production</strong><p>CD applies the built project to each environment with the matching target. Promotion should reuse the same artifact rather than rebuild from scratch.</p></div>
+  <div class="tl-item"><div class="tl-item__time">On a schedule</div><strong>Refresh on a timer</strong><p>A cron or Actions schedule runs the daily build so dashboards reflect new data even with no code change.</p></div>
+</div>
+
+<h2>Where CI/CD settings live</h2>
+
+<p>dbt project settings are plain files, so a CI system mostly needs to install dbt, point it at a profile, and call the right commands.</p>
+
+<div class="flow">
+  <span class="flow__node">{{icon:git-branch}}Commit</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:workflow}}Workflow file</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:key}}Profile + secrets</span>
+  <span class="flow__arrow">{{icon:arrow-right}}</span>
+  <span class="flow__node">{{icon:terminal}}dbt build</span>
+</div>
+
+<p>GitHub Actions is the most common choice for dbt projects. A <strong>workflow</strong> is a YAML file in <code>.github/workflows/</code>; an <strong>event</strong> like <code>pull_request</code> triggers it; and a <strong>job</strong> runs on a fresh virtual machine called a runner.</p>
+
+<div class="tabs">
+  <div class="tabs__list" role="tablist">
+    <button class="tab" type="button" aria-selected="true">dbt Core + a CI service</button>
+    <button class="tab" type="button">dbt Cloud jobs</button>
+  </div>
+  <div class="tabs__panel">
+    <p>You bring the runner. A service such as GitHub Actions checks out the repo, installs dbt and calls <code>dbt build</code>. Scheduling and secrets are yours to manage in the workflow file.</p>
+  </div>
+  <div class="tabs__panel">
+    <p>The scheduler is built in. dbt Cloud runs jobs on managed infrastructure, with environments, job schedules and CI checks configured in its UI or API instead of a runner you maintain.</p>
+  </div>
+</div>
+
+<h2>A minimal CI workflow</h2>
+
+<p>This intro-level workflow builds and tests every pull request against a separate target. The advanced level adds linting, artifact reuse and pull-request comments.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">.github/workflows/dbt.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">name: dbt CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DBT_PROFILES_DIR: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install "dbt-duckdb&gt;=1.8"
+      - run: dbt deps
+      - run: dbt build --target ci</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:key}}</div>
+  <div>
+    <div class="callout__title">Secrets never belong in the repo</div>
+    <p>Commit connection details that are not sensitive, and inject credentials at run time through the CI system’s secret store (for example <code>env:</code> values backed by repository secrets). A committed <code>profiles.yml</code> with a password is a leak.</p>
+  </div>
+</div>
+
+<h2>Keep CI away from production</h2>
+
+<p>The single most important safety rule is that a pull request must never write to your production schema. Give the CI run its own target and let it write to a disposable schema that is dropped or overwritten freely.</p>
+
+<div class="split">
+  <div class="split__body stack">
+    <h3>Targets isolate environments</h3>
+    <p>A profile can hold several targets — <code>dev</code>, <code>ci</code>, <code>prod</code> — that differ only in schema or database. Selecting one is a flag:</p>
+    <div class="codeblock"><div class="codeblock__bar"><span class="codeblock__dots"><i></i><i></i><i></i></span><span class="codeblock__file">terminal</span><span class="codeblock__lang">bash</span><button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button></div><pre><code class="language-bash">dbt build --target ci</code></pre></div>
+    <p>CI writes to the <code>ci</code> schema, so a failed experiment can never corrupt the tables your dashboards read.</p>
+  </div>
+  <div class="split__visual">
+    {{diagram:environments|Code is verified in a CI target, then the same build is promoted to staging and production.}}
+  </div>
+</div>
+
+<h2>Common pitfalls</h2>
+
+<div class="accordion">
+  <details class="acc"><summary>Running CI against production data</summary><div class="acc__body"><p>A pull request that writes into the production schema can overwrite live tables with half-finished logic. Always isolate CI into its own target and schema.</p></div></details>
+  <details class="acc"><summary>Forgetting <code>dbt deps</code></summary><div class="acc__body"><p>Packages declared in <code>packages.yml</code> are not committed. A clean runner has no <code>dbt_packages/</code> until it runs <code>dbt deps</code>, so macros from packages look missing.</p></div></details>
+  <details class="acc"><summary>Only running models, never tests</summary><div class="acc__body"><p><code>dbt run</code> builds models but does not run tests. Use <code>dbt build</code>, which runs and tests nodes in DAG order, so a failing test stops the bad data from flowing downstream.</p></div></details>
+  <details class="acc"><summary>Deploying a rebuild instead of the verified build</summary><div class="acc__body"><p>If CD rebuilds from a different commit than the one CI approved, you have not actually verified what shipped. Promote the artifact CI produced — the <code>manifest.json</code> records what was built.</p></div></details>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span><strong>CI</strong> verifies each change in an isolated target; <strong>CD</strong> promotes the verified result to the environments it serves.</span></li>
+  <li>{{icon:circle-check}}<span>dbt Core runs commands and exits — a scheduler (Actions, cron, an orchestrator) decides <em>when</em> they run.</span></li>
+  <li>{{icon:circle-check}}<span><code>dbt build</code> runs models, tests, snapshots and seeds in DAG order; it is the natural CI command.</span></li>
+  <li>{{icon:circle-check}}<span>Use targets and separate schemas so a pull request can never touch production.</span></li>
+  <li>{{icon:circle-check}}<span>Keep credentials out of the repo and inject them through the CI secret store.</span></li>
+</ul>
+
+<div class="quiz" data-explain="CI runs on the pull request to verify the change in isolation; CD promotes the verified build to the environments it serves.">
+  <div class="quiz__q">{{icon:circle-help}} <span>Which statement correctly separates CI from CD for a dbt project?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>CI deploys to production and CD runs tests on the pull request.</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>CI verifies the change on a pull request in an isolated target; CD promotes the verified build.</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>CI and CD are the same command; the only difference is the time of day they run.</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>CI tells you when a change is safe, but it doesn’t make the build fast. In <a href="./6-performance.html">Query Optimization &amp; Caching</a> you’ll learn what dbt’s “caching” really means and how to rebuild only what changed.</p>
+  </div>
+</div>

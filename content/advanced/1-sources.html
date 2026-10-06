@@ -1,0 +1,235 @@
+<p class="lead">Most dbt mistakes are not made in the models — they are made at the boundary where raw data enters. Sources turn that boundary into something you can inspect: they name the upstream tables, record who loads them, test their shape, and measure how stale they are before a single model runs. This lesson makes your raw layer a first-class citizen.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">A source is a promise about data you don’t control</div>
+    <p>Unlike a model, a source is not built by dbt. <code>{{ source('ecommerce', 'orders') }}</code> tells dbt where an upstream table lives, creates a lineage edge, and lets you attach tests and freshness thresholds to it. You are asserting what the raw data should look like without owning the process that produces it.</p>
+  </div>
+</div>
+
+<h2>Sources are the front door of the DAG</h2>
+
+<p>A model that selects from a source depends on it, exactly as it would depend on another model. dbt records the edge, orders the build correctly, and — critically — can warn you when that upstream table has stopped updating.</p>
+
+{{diagram:pipeline|Sources sit at the left edge: the raw tables dbt observes before any transformation begins.}}
+
+<p>Compared with a bare table name, a source declaration buys you four things:</p>
+
+<div class="cards">
+  <div class="card reveal"><div class="card__icon">{{icon:git-branch}}</div><div class="card__title">Real lineage</div><p class="card__text">The raw table appears in the DAG, so you can trace a metric all the way back to where it entered the warehouse.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:flask-conical}}</div><div class="card__title">Testable assumptions</div><p class="card__text">Run the same generic tests on source columns as on models — uniqueness, nulls, accepted values.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:clock}}</div><div class="card__title">Freshness checks</div><p class="card__text">dbt compares the newest timestamp to thresholds and warns or errors when data is late.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:book-open}}</div><div class="card__title">Documentation</div><p class="card__text">Descriptions and column metadata render into the generated docs site.</p></div>
+</div>
+
+<h2>Declaring a source fully</h2>
+
+<p>Sources live under a <code>sources:</code> key in any <code>.yml</code> file in your <code>models/</code> directory. This example documents the e-commerce raw tables, adds freshness thresholds and tests the key columns.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/_sources.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+sources:
+  - name: ecommerce
+    database: raw
+    schema: ecommerce
+    loader: fivetran
+    description: Raw tables loaded hourly from the application database.
+
+    freshness:
+      warn_after: {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
+    loaded_at_field: _etl_loaded_at
+
+    tables:
+      - name: orders
+        description: One row per order, including cancelled orders.
+        columns:
+          - name: order_id
+            description: Primary key.
+            data_tests:
+              - unique
+              - not_null
+          - name: status
+            data_tests:
+              - accepted_values:
+                  values: ['completed', 'cancelled', 'returned']
+
+      - name: customers
+        description: One row per customer.
+        columns:
+          - name: customer_id
+            data_tests:
+              - unique
+              - not_null</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:braces}}</div>
+  <div>
+    <div class="callout__title">Newer dbt moves freshness under <code>config:</code></div>
+    <p>This tutorial targets the dbt 1.8 syntax, where <code>freshness</code> and <code>loaded_at_field</code> sit directly on the source. In newer releases (1.10+/v2) they move under a <code>config:</code> block on the source or table. The concepts — <code>warn_after</code>, <code>error_after</code>, <code>loaded_at_field</code> — are unchanged.</p>
+  </div>
+</div>
+
+<h2>Source freshness</h2>
+
+<p>Freshness answers one question: when did this table last change? Give dbt a reliable timestamp column and thresholds and it can flag a stale pipeline before anyone queries it.</p>
+
+<div class="steps">
+  <div class="step reveal"><div class="step__marker">1</div><div><div class="step__title">Pick the loaded-at column</div><p class="step__body"><code>loaded_at_field</code> names the column the EL tool writes on every load. Without it (and without warehouse metadata), dbt cannot measure freshness.</p></div></div>
+  <div class="step reveal"><div class="step__marker">2</div><div><div class="step__title">Set warn and error thresholds</div><p class="step__body">Each threshold is a <code>count</code> and a <code>period</code> such as <code>{count: 12, period: hour}</code>. Tables inherit the source-level values unless they override them.</p></div></div>
+  <div class="step reveal"><div class="step__marker">3</div><div><div class="step__title">dbt compares max(timestamp) to now</div><p class="step__body">dbt runs <code>dbt source freshness</code>, which issues a small query — effectively <code>select max(_etl_loaded_at) from …</code> — and classifies each table as passing, warning or erroring.</p></div></div>
+</div>
+
+<p>Scope the check with the same selectors you use elsewhere: <code>dbt source freshness --select source:ecommerce</code> checks one source, and <code>--select source:ecommerce.orders</code> checks a single table. On a very large table a full <code>max()</code> scan can be expensive, so add a <code>filter</code> that limits the rows the freshness query reads — for example <code>filter: _etl_loaded_at &gt;= current_date - interval '2' day</code>. For dbt 1.8 the command is <code>dbt source freshness</code>; newer releases also expose <code>dbt freshness --resource-type source</code>.</p>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Freshness is not a test</div>
+    <p><code>dbt source freshness</code> is a separate command from <code>dbt test</code>. A freshness warning does not fail <code>dbt build</code> unless you wire it into your orchestration. Results are written to <code>target/sources.json</code>; newer releases also emit <code>target/freshness.json</code>.</p>
+  </div>
+</div>
+
+<h2>Testing sources</h2>
+
+<p>The <code>data_tests</code> in the source YAML run through the normal test command, but they are selected by source rather than by model.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># Test every source table
+dbt test --select "source:*"
+
+# Test one source and all its tables
+dbt test --select source:ecommerce
+
+# Test one source table
+dbt test --select source:ecommerce.orders</code></pre>
+</div>
+
+<p>Generic tests on sources catch the failure modes that hurt most: a duplicated key, a null primary key, or a status value that was never agreed on. Because these run before downstream models, a dirty raw table fails fast instead of silently poisoning a mart.</p>
+
+<h2>Contracts at the source boundary</h2>
+
+<p>It is natural to want to “lock” the raw schema. dbt gives you three different mechanisms at this boundary, and they are not interchangeable.</p>
+
+<div class="table-wrap"><table class="table--compare">
+  <thead><tr><th>Mechanism</th><th>What it checks</th><th>Where it lives</th></tr></thead>
+  <tbody>
+    <tr><td>Generic tests</td><td>Values: uniqueness, nulls, accepted sets, relationships</td><td>Source columns in <code>_sources.yml</code></td></tr>
+    <tr><td>Freshness</td><td>How recently the table was loaded</td><td><code>freshness</code> + <code>loaded_at_field</code></td></tr>
+    <tr class="highlight"><td>Model contract</td><td>Names and <code>data_type</code> of columns</td><td>The staging model — <strong>not</strong> the source</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout callout--danger">
+  <div class="callout__icon">{{icon:lock}}</div>
+  <div>
+    <div class="callout__title">Sources cannot be contracted</div>
+    <p>dbt <strong>model contracts</strong> — <code>contract: {enforced: true}</code> with column names and <code>data_type</code> — do not apply to sources. Contracts are supported for models materialized as <code>table</code> or <code>view</code> (and some <code>incremental</code> configurations), and dbt explicitly excludes sources, seeds and snapshots. Treat source columns and tests as <em>documentation and validation</em>, not enforcement.</p>
+  </div>
+</div>
+
+<p>So how do you enforce the shape of raw data? Put the contract on the first model that reads it. A staging model is thin, so its columns should mirror the source exactly — making it the natural place to pin names and types.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/staging/stg_orders.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">version: 2
+
+models:
+  - name: stg_orders
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: order_id
+        data_type: string
+        constraints:
+          - type: not_null
+      - name: order_date
+        data_type: date
+      - name: status
+        data_type: string</code></pre>
+</div>
+
+<p>If the source renames a column or changes a type, the contract on <code>stg_orders</code> fails the build — which is the alarm you wanted. Contract support and the available constraint types vary by adapter, so confirm what your warehouse enforces.</p>
+
+<h2>Building only what moved</h2>
+
+<p>Freshness becomes powerful when it drives selection. Ask dbt to build just the models downstream of sources that refreshed, or everything downstream of one source, and explore the lineage from the command line.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># Record which sources are fresher than last run, then build downstream
+dbt source freshness
+dbt build --select source_status:fresher+
+
+# Build everything downstream of one source
+dbt run --select source:ecommerce+
+
+# List the source and its descendants, then render the full docs graph
+dbt ls --select source:ecommerce+
+dbt docs generate</code></pre>
+</div>
+
+{{diagram:lineage|From raw source through staging and marts to the exposure — the whole path is discoverable from declarations in code.}}
+
+<h2>Pitfalls to avoid</h2>
+
+<div class="accordion">
+  <details class="acc"><summary>No loaded-at column</summary><div class="acc__body"><p>Freshness needs a timestamp the loader updates on every write. If you skip <code>loaded_at_field</code>, dbt cannot measure freshness and will simply skip the check.</p></div></details>
+  <details class="acc"><summary>Using a mutable timestamp as loaded-at</summary><div class="acc__body"><p>A business timestamp that updates when a row changes will make the source look permanently fresh even if the pipeline stopped. Use the timestamp written by the load process itself.</p></div></details>
+  <details class="acc"><summary>Testing sources only in production</summary><div class="acc__body"><p>Source tests belong in CI too. If a raw column is renamed upstream, you want the pull request — not a stakeholder — to find out first.</p></div></details>
+  <details class="acc"><summary>Assuming a contract on a source will enforce anything</summary><div class="acc__body"><p>It won’t — sources don’t support contracts. Enforce the schema on the staging model that reads the source, and use source tests for the data values.</p></div></details>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span><code>{{ source('name', 'table') }}</code> names upstream tables, draws lineage and lets you test and measure them.</span></li>
+  <li>{{icon:circle-check}}<span>Freshness needs <code>loaded_at_field</code> plus <code>warn_after</code>/<code>error_after</code>; check it with <code>dbt source freshness</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Source tests run through <code>dbt test --select source:*</code> and fail fast before models consume dirty data.</span></li>
+  <li>{{icon:circle-check}}<span><strong>Sources cannot be contracted.</strong> Enforce schema with a model contract on the staging model instead.</span></li>
+  <li>{{icon:circle-check}}<span>Build only what moved with <code>dbt build --select source_status:fresher+</code>.</span></li>
+</ul>
+
+<div class="quiz" data-explain="Model contracts apply to models materialized as table/view (and some incremental configs) — sources, seeds and snapshots are explicitly excluded.">
+  <div class="quiz__q">{{icon:circle-help}} <span>How do you enforce an expected schema for a raw source table?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>Add <code>contract: {enforced: true}</code> to the source in <code>_sources.yml</code>.</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>Put an enforced model contract on the staging model that selects from the source.</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>Add <code>unique</code> and <code>not_null</code> tests; tests enforce the schema.</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Your sources are trustworthy and fresh. Next, <a href="./2-macros-advanced.html">Advanced Macro Patterns</a> shows how to write adapter-aware macros, query the warehouse from Jinja and package logic for the whole team.</p>
+  </div>
+</div>

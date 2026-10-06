@@ -1,0 +1,387 @@
+<p class="lead">At expert level, performance is not guessing — it is measurement. You read the query plan, prune the partitions the warehouse never needed, choose the right incremental strategy, and put a real cache in front of the expensive work. This page is about the evidence behind every optimization.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:lightbulb}}</div>
+  <div>
+    <div class="callout__title">No optimization without a baseline</div>
+    <p>A model that "feels slow" is not a fact. Capture bytes scanned, compute time and wall-clock duration <em>before</em> you change anything, or you will never know which change mattered.</p>
+  </div>
+</div>
+
+<h2>Measure first: the numbers that matter</h2>
+
+<p>Four metrics explain almost every performance complaint. They are not the same, and optimizing for one can hurt another.</p>
+
+<div class="stat-grid">
+  <div class="stat"><div class="stat__value">I/O</div><div class="stat__label">bytes swept from storage — the number partition pruning attacks</div></div>
+  <div class="stat"><div class="stat__value">CPU</div><div class="stat__label">shuffle, join and aggregation work — the number clustering attacks</div></div>
+  <div class="stat"><div class="stat__value">wall</div><div class="stat__label">elapsed time a person waits — the number threads and batching attack</div></div>
+  <div class="stat"><div class="stat__value">cost</div><div class="stat__label">credits or dollars billed — the number governance attacks</div></div>
+</div>
+
+<p>dbt already records the most accessible number for you: every node in <code>run_results.json</code> carries an <code>execution_time</code>. Sort by it to find the real offender — it is rarely the model everyone complains about.</p>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Metric</th><th>Where to read it</th><th>What it tells you</th></tr></thead>
+    <tbody>
+      <tr><td>Bytes scanned</td><td>Query plan / warehouse query history</td><td>Whether pruning and column selection work</td></tr>
+      <tr><td>Execution time per node</td><td><code>target/run_results.json</code></td><td>Which model is the critical path</td></tr>
+      <tr><td>Rows and spills</td><td><code>EXPLAIN ANALYZE</code></td><td>Whether the engine is doing more work than it should</td></tr>
+      <tr class="highlight"><td>Credits / bytes billed</td><td>Warehouse query history</td><td>The real bill — the constraint you are ultimately tuning</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:microscope}}</div>
+  <div>
+    <div class="callout__title">Tune the critical path, not every model</div>
+    <p>Making a fast model faster does nothing for total runtime. Only the slowest chain through the DAG moves the finish line, so start with the node on that chain.</p>
+  </div>
+</div>
+
+<div class="tryit">
+  <div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash"># Rank the last run's models by execution time (seconds)
+jq '.results
+    | sort_by(.execution_time)
+    | reverse
+    | .[0:5]
+    | map({model: .unique_id, seconds: .execution_time})' \
+  target/run_results.json</code></pre>
+    </div>
+    <p>Expected output: the five slowest nodes in the DAG. Optimize the one at the top of the list — it is the critical path others wait on.</p>
+  </div>
+</div>
+
+<h2>Read the query plan like a DBA</h2>
+
+<p>Every warehouse will show you what it intends to do before it does it. In dbt, compile the model to inspect the exact SQL that would run, then hand that SQL to the planner.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># Render the model to pure SQL without running it
+dbt compile --select fct_orders
+
+# Then ask the warehouse what it would do with that SQL
+dbt show --select fct_orders --limit 10</code></pre>
+</div>
+
+<p>A DuckDB <code>EXPLAIN ANALYZE</code> reads bottom-up: scans first, then joins and aggregates. Sample output is abbreviated below — the operators and their row counts are the story.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">query plan</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">explain analyze
+select
+    order_date,
+    region,
+    sum(line_total) as revenue
+from {{ ref('fct_orders') }}
+where order_date &gt;= date '2024-03-01'
+group by 1, 2;
+
+-- ┌─────────────────────────┐
+-- │ HASH_GROUP_BY           │  2.1k rows out
+-- │   FILTER                 │  pushed into scan ✓
+-- │     TABLE_SCAN fct_orders│  1.2M rows scanned
+-- └─────────────────────────┘</code></pre>
+</div>
+
+<div class="cards">
+  <div class="card reveal"><div class="card__icon">{{icon:scan-line}}</div><div class="card__title">Full scan where a seek was possible</div><p class="card__text">The plan scans every row because the predicate does not align with the partitioning or index.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:network}}</div><div class="card__title">Nested loop over a large table</div><p class="card__text">A loop join on millions of rows usually means a missing join key or a stale statistic.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:database-zap}}</div><div class="card__title">Spilling to disk</div><p class="card__text">The aggregation exceeded memory and swapped out. Reduce columns or add a pre-aggregate.</p></div>
+  <div class="card reveal"><div class="card__icon">{{icon:percent}}</div><div class="card__title">Row estimate far from reality</div><p class="card__text">A 100× misestimate means the planner chose the wrong strategy. Refresh statistics.</p></div>
+</div>
+
+<h2>Partition pruning</h2>
+
+<p>Partitioning splits a large table into slices by a column — usually a date. When a query filters on that column, the engine reads only the matching slices. This is the single biggest I/O win available on multi-million-row facts.</p>
+
+{{diagram:partition|A predicate on the partition column lets the engine skip every slice it cannot possibly need.}}
+
+<p>The dbt config is adapter-specific. The key is that the partition column is declared in the model and the query filter lines up with it.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/marts/fct_orders.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{{ config(
+    materialized='incremental',
+    partition_by={'field': 'order_date', 'data_type': 'date'},
+    cluster_by=['customer_id']
+) }}
+
+select
+    order_id,
+    customer_id,
+    order_date,
+    line_total
+from {{ ref('stg_ecommerce__orders') }}
+{% if is_incremental() %}
+where order_date &gt; (select max(order_date) from {{ this }})
+{% endif %}</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Never wrap the partition column in a function</div>
+    <p><code>where date_trunc('month', order_date) = ...</code> prevents pruning — the engine must compute the function for every row. Filter on the raw column range instead so the slices can be skipped.</p>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>Adapter</th><th>Pruning mechanism</th><th>dbt config</th></tr></thead>
+    <tbody>
+      <tr><td>BigQuery</td><td>Partitioned + clustered tables</td><td><code>partition_by</code>, <code>cluster_by</code></td></tr>
+      <tr><td>Snowflake</td><td>Micro-partitions + clustering keys</td><td><code>cluster_by</code></td></tr>
+      <tr><td>Databricks</td><td>Delta partitions / liquid clustering</td><td>adapter-specific clustering config</td></tr>
+      <tr><td>Postgres</td><td>Declarative partitions or indexes</td><td>handled in DDL, not a dbt model config</td></tr>
+      <tr class="highlight"><td>DuckDB</td><td>Zone maps on ordered columns</td><td>no <code>partition_by</code>; rely on predicates and sorting</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Pick the right incremental strategy</h2>
+
+<p>An incremental model rebuilds only the new or changed rows. <em>How</em> it merges those rows is the strategy, and the correct choice depends on whether rows are append-only or mutable.</p>
+
+{{diagram:materializations|Each persistence choice trades freshness, storage and rebuild cost — incremental wins on large, growing facts.}}
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Strategy</th><th>Behavior</th><th>Use when</th></tr></thead>
+    <tbody>
+      <tr><td><code>append</code></td><td>Insert new rows only</td><td>Immutable events — logs, clickstream, raw invoices</td></tr>
+      <tr><td><code>merge</code></td><td>Upsert by unique key</td><td>Rows change status over time — orders, subscriptions</td></tr>
+      <tr><td><code>delete+insert</code></td><td>Delete matching keys, then insert</td><td>Mutable partitions on engines where merge is costly</td></tr>
+      <tr><td><code>insert_overlay</code></td><td>Replace whole partitions</td><td>Partitioned tables rebuilt by date window</td></tr>
+      <tr class="highlight"><td><code>microbatch</code></td><td>Process disjoint time batches</td><td>Very large time-series facts and easy backfills</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:dna}}</div>
+  <div>
+    <div class="callout__title"><code>unique_key</code> is the contract</div>
+    <p>For <code>merge</code> and <code>delete+insert</code>, dbt needs a key. If the key is not truly unique, the merge silently fans out rows. Test it with <code>unique</code> before trusting the strategy.</p>
+  </div>
+</div>
+
+<h2>Micro-batch the truly enormous models</h2>
+
+<p>Microbatch is an incremental strategy for time-series facts that are too large to process in one pass. Instead of one giant filter, dbt splits the work into <strong>disjoint batches</strong> by an event-time column — one day at a time by default — and tracks which batches are complete.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/marts/fct_events.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{{ config(
+    materialized='incremental',
+    incremental_strategy='microbatch',
+    event_time='event_at',
+    batch_size='day',
+    lookback=1
+) }}
+
+select
+    event_id,
+    customer_id,
+    event_at,
+    event_type
+from {{ ref('stg_ecommerce__events') }}</code></pre>
+</div>
+
+<p>Because each batch is independent, a failed run only reprocesses its window, and backfills become surgical. dbt exposes the window on the CLI:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">terminal</span>
+    <span class="codeblock__lang">bash</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-bash"># Backfill a specific range of event time, day by day
+dbt run --select fct_events \
+  --event-time-start "2024-01-01" \
+  --event-time-end "2024-02-01"</code></pre>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:refresh-cw}}</div>
+  <div>
+    <div class="callout__title">Microbatch respects late data with <code>lookback</code></div>
+    <p><code>lookback=1</code> reprocesses one prior batch, so a late-arriving event is captured on the next run instead of being missed forever.</p>
+  </div>
+</div>
+
+<h2>Materialized caches, defined honestly</h2>
+
+<p>"Cache" is overloaded. There are three distinct things, and confusing them leads to tuning the wrong layer.</p>
+
+{{diagram:cache|dbt's state cache skips unchanged models; materialized tables cache query results for readers.}}
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Kind</th><th>What it caches</th><th>Invalidated by</th></tr></thead>
+    <tbody>
+      <tr><td>Warehouse result cache</td><td>Identical query results</td><td>Any change to underlying data or SQL</td></tr>
+      <tr><td>Table / incremental materialization</td><td>Computed result rows on disk</td><td>The next <code>dbt build</code> of that model</td></tr>
+      <tr><td>Materialized view</td><td>Rows the warehouse refreshes for you</td><td>Warehouse refresh policy or base-table writes</td></tr>
+      <tr class="highlight"><td>dbt state cache</td><td>The <em>build decision</em>, via state hashes</td><td><code>--select state:modified</code> comparing manifests</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:database}}</div>
+  <div>
+    <div class="callout__title">dbt's "cache" only skips builds</div>
+    <p>When dbt says only changed models rebuild, it is comparing <strong>hashes in the manifest</strong> — it is not caching data. The data cache is whatever materialization you chose: <code>table</code>, <code>incremental</code>, or a warehouse materialized view.</p>
+  </div>
+</div>
+
+<p>The classic server-side cache is a pre-aggregated mart. It stores a smaller, already-summarized result that BI can query cheaply, refreshed on its own schedule.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/marts/agg_revenue_by_day.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">-- A 365-row answer to a question BI asks a hundred times a day.
+{{ config(materialized='table') }}
+
+select
+    order_date,
+    region,
+    count(distinct order_id) as orders,
+    sum(line_total) as revenue
+from {{ ref('fct_orders') }}
+group by 1, 2</code></pre>
+</div>
+
+<h2>Threads and concurrency</h2>
+
+<p>dbt runs independent DAG branches in parallel using <code>threads</code>. More threads is not automatically faster — past the warehouse's own concurrency limit, extra threads just queue and contend.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">profiles.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">prod:
+  type: duckdb
+  path: /data/analytics_prod.duckdb
+  schema: analytics
+  threads: 1        # DuckDB allows a single writer to the file</code></pre>
+</div>
+
+<div class="table-wrap">
+  <table class="table--zebra">
+    <thead><tr><th>Warehouse</th><th>Threads guidance</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>DuckDB / SQLite</td><td><code>threads: 1</code></td><td>Single-writer file locks; parallelism causes contention, not speed</td></tr>
+      <tr><td>Postgres</td><td>Roughly CPU cores, modest</td><td>Each thread opens a connection and competes for shared buffers</td></tr>
+      <tr><td>Snowflake</td><td>Do not exceed warehouse concurrency</td><td>Extra queries queue; scale the warehouse up instead</td></tr>
+      <tr class="highlight"><td>BigQuery</td><td>Threads for API parallelism</td><td>The warehouse scales compute itself; threads only reduce client wait</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:sliders-horizontal}}</div>
+  <div>
+    <div class="callout__title">Parallelism trades speed for blast radius</div>
+    <p>With many threads, a bad deploy changes many models at once before the first failure surfaces. On production, lower threads and <code>--fail-fast</code> give you a smaller failure surface.</p>
+  </div>
+</div>
+
+<h2>Cost guardrails</h2>
+
+<p>Performance work is incomplete until it is bounded. Tag every query so spend is attributable, and cap the runaway query before it bills you.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">dbt_project.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">query-comment:
+  comment: 'dbt | {{ node.unique_id }} | {{ target.name }}'
+  append: true</code></pre>
+</div>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Guardrail</th><th>What it limits</th></tr></thead>
+    <tbody>
+      <tr><td>Query comments / tags</td><td>Makes cost attributable by model and environment</td></tr>
+      <tr><td>Warehouse budgets &amp; alerts</td><td>Notifies when daily spend crosses a threshold</td></tr>
+      <tr><td>Statement / job timeouts</td><td>Kills a runaway query before it scans the whole table</td></tr>
+      <tr><td>Byte / credit caps</td><td>Refuses a query whose estimate exceeds a ceiling</td></tr>
+      <tr class="highlight"><td>Scheduled heavy models</td><td>Moves expensive rebuilds off the interactive path</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>Measure bytes scanned, compute, wall-clock time and cost before you touch anything.</span></li>
+  <li>{{icon:circle-check}}<span>Read the query plan: pushed-down filters, scan row counts, join strategy and spills are the culprits.</span></li>
+  <li>{{icon:circle-check}}<span>Partition pruning only works when the predicate uses the raw partition column, never a function around it.</span></li>
+  <li>{{icon:circle-check}}<span>Match the incremental strategy to the data shape: <code>append</code> for events, <code>merge</code> for mutable rows, <code>microbatch</code> for giant time series.</span></li>
+  <li>{{icon:circle-check}}<span>dbt's <code>state</code> is a build cache; data caching is a materialization decision.</span></li>
+  <li>{{icon:circle-check}}<span>Size <code>threads</code> to the warehouse and cap spend with query comments, timeouts and budgets.</span></li>
+</ul>
+
+<div class="quiz" data-explain="Pruning depends on a range predicate against the raw partition column, so wrapping it in a function forces the engine to evaluate every row.">
+  <div class="quiz__q">{{icon:circle-help}} <span>Why does <code>where date_trunc('month', order_date) = '2024-03-01'</code> defeat partition pruning?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span>Because date_trunc is not supported by warehouses</span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span>The function must be computed per row, so the engine cannot skip partitions</span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span>Because it selects too many columns</span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>A fast pipeline is worthless if nobody can maintain it. In <a href="./4-best-practices.html">Best Practices &amp; Patterns</a> you'll turn all of this into team conventions: layering, naming, docs, reviews and anti-patterns.</p>
+  </div>
+</div>

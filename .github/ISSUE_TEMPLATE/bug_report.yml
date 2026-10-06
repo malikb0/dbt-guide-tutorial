@@ -1,0 +1,57 @@
+name: Bug report
+description: Something on the site is broken, wrong, or out of date.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to file a report. Please fill this in as fully as you can.
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: The URL or path of the affected page.
+      placeholder: e.g. intermediate/4-snapshots.html
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What's wrong
+      description: Describe the problem. For a content error, quote the exact sentence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What the correct behaviour or wording should be. Cite dbt/DuckDB docs where relevant.
+    validations:
+      required: false
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of issue
+      options:
+        - Content is factually wrong
+        - Content is unclear
+        - Broken link or anchor
+        - Visual / layout problem
+        - JavaScript interaction (search, theme, quiz)
+        - Build or tooling
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Browser and OS (for visual/JS issues), or Node version (for build issues).
+      placeholder: e.g. Firefox 128 on Windows 11 · Node 20.11
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or extra context
+    validations:
+      required: false

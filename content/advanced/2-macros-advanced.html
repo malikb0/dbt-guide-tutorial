@@ -1,0 +1,317 @@
+<p class="lead">A macro is a function for SQL: write the logic once, call it from any model. You met simple macros at the intermediate level. Here we go deeper — adapter-aware SQL with <code>adapter.dispatch</code>, querying the warehouse from Jinja with <code>run_query</code> and the <code>execute</code> guard, and shipping macros to your whole team as a dbt package.</p>
+
+<div class="callout callout--concept">
+  <div class="callout__icon">{{icon:puzzle}}</div>
+  <div>
+    <div class="callout__title">Macros generate SQL — they do not move data</div>
+    <p>A macro is a reusable Jinja template. When dbt compiles a model, every macro call is replaced with the SQL text it returns <em>before</em> that statement reaches your warehouse.</p>
+  </div>
+</div>
+
+<h2>From copy-paste to one definition</h2>
+
+<p>Suppose three staging models all convert a cents column into dollars. Copying the same <code>round(... / 100.0, 2)</code> into every file is exactly how small inconsistencies become big reconciliation problems. A macro keeps a single definition.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">macros/cents_to_dollars.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% macro cents_to_dollars(column_name, scale=2) %}
+    round({{ column_name }} / 100.0, {{ scale }})
+{% endmacro %}</code></pre>
+</div>
+
+<p>Call it like a function. dbt resolves the arguments while compiling the model, so the warehouse only ever sees plain SQL:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/stg_payments.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    payment_id,
+    {{ cents_to_dollars('amount_cents') }} as amount,
+    payment_method
+from {{ source('ecommerce', 'payments') }}</code></pre>
+</div>
+
+<p>Macros live in <code>macros/*.sql</code> and are visible everywhere in the project. Because they render at compile time, a macro can generate whole column lists, joins or <code>CASE</code> expressions — not just scalar helpers.</p>
+
+{{diagram:macros|Write the logic once, then reuse it across staging, intermediate and mart models.}}
+
+<h2>Making macros adapter-aware with adapter.dispatch</h2>
+
+<p>Every warehouse speaks slightly different SQL. A team that runs dbt on DuckDB in development and BigQuery in production cannot hard-code <code>date_trunc</code> and hope it behaves the same. <strong>Multiple dispatch</strong> solves this: you call one macro name, and dbt picks the implementation that matches the active adapter.</p>
+
+<h3>The dispatch pattern</h3>
+
+<p>Three parts: a thin primary macro that dispatches, a <code>default__</code> implementation that works anywhere, and adapter-specific overrides named <code>&lt;adapter&gt;__</code>.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">macros/month_start.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% macro month_start(date_column) %}
+    {{ return(adapter.dispatch('month_start', 'my_shop')(date_column)) }}
+{% endmacro %}
+
+{% macro default__month_start(date_column) %}
+    date_trunc('month', {{ date_column }})
+{% endmacro %}
+
+{% macro bigquery__month_start(date_column) %}
+    timestamp_trunc({{ date_column }}, month)
+{% endmacro %}</code></pre>
+</div>
+
+<div class="callout callout--info">
+  <div class="callout__icon">{{icon:search}}</div>
+  <div>
+    <div class="callout__title">How the search resolves</div>
+    <p>For each call, dbt looks for <code>bigquery__month_start</code> first, then <code>default__month_start</code>. The <code>macro_namespace</code> argument (<code>'my_shop'</code>) scopes the search to your project; packages pass their own package name so they can be extended or overridden safely.</p>
+  </div>
+</div>
+
+<p>Call the macro by its primary name; the caller never knows which SQL it got:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/monthly_revenue.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    {{ month_start('order_date') }} as month,
+    sum(quantity * unit_price) as revenue
+from {{ ref('stg_orders') }}
+group by 1</code></pre>
+</div>
+
+<h2>Running SQL from Jinja: run_query and the execute guard</h2>
+
+<p>Most macros only render text. Sometimes you need a real answer from the warehouse <em>while compiling</em> — the list of distinct payment methods, the newest order date, whether a table exists. That is what <code>run_query</code> is for.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/payment_methods_pivot.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% set query %}
+    select distinct payment_method
+    from {{ ref('stg_payments') }}
+    order by 1
+{% endset %}
+
+{% set results = run_query(query) %}
+
+{% if execute %}
+    {% set methods = results.columns[0].values() %}
+{% else %}
+    {% set methods = [] %}
+{% endif %}
+
+select
+    order_id,
+    {% for method in methods %}
+    sum(case when payment_method = '{{ method }}' then amount end) as {{ method }}_amount,
+    {% endfor %}
+    sum(amount) as total_amount
+from {{ ref('stg_payments') }}
+group by 1</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:triangle-alert}}</div>
+  <div>
+    <div class="callout__title">Always guard database reads with {% if execute %}</div>
+    <p>dbt parses every file before it runs anything. During that parse, <code>execute</code> is <code>False</code> and no query has returned a table, so touching <code>results.columns</code> raises <code>'None' has no attribute 'table'</code>. Wrapping the access in <code>{% if execute %}</code> keeps parsing clean.</p>
+  </div>
+</div>
+
+<h3>execute vs run: what fires when</h3>
+
+<p>Keep the two phases separate in your head:</p>
+
+<div class="table-wrap">
+  <table class="table--compare">
+    <thead><tr><th>Phase</th><th><code>execute</code></th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td>Parsing</td><td class="cell-bad">False</td><td>dbt reads files, finds <code>ref()</code>/<code>source()</code>, builds the DAG. No SQL runs.</td></tr>
+      <tr><td>Compilation with a connection</td><td class="cell-ok">True</td><td>Jinja is rendered fully; <code>run_query</code> calls actually hit the warehouse.</td></tr>
+      <tr><td>Execution</td><td class="cell-good">True</td><td>Materializations create or update the tables — this is the model's own SQL running.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>One subtlety: <code>execute</code> is also <code>True</code> when dbt compiles with a live connection, including <code>dbt compile</code> and <code>dbt docs generate</code>. If a macro has <em>side effects</em> (an <code>INSERT</code>, <code>DELETE</code> or <code>VACUUM</code>), scope it to the commands you mean with <code>flags.WHICH</code>:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">macros/record_run.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% macro record_run(model_name) %}
+    {% if execute and flags.WHICH in ['run', 'build'] %}
+        {% call statement('audit', fetch_result=False) %}
+            insert into audit_log (model_name, ran_at)
+            values ('{{ model_name }}', current_timestamp)
+        {% endcall %}
+    {% endif %}
+{% endmacro %}</code></pre>
+</div>
+
+<p>Use <code>run_query</code> when you want results back. Use a <code>statement</code> block with <code>fetch_result=False</code> for fire-and-forget DDL/DML, because <code>run_query</code> returns <code>none</code> for statements that produce no result set.</p>
+
+<h2>Shipping macros with dbt packages</h2>
+
+<p>A dbt package is a git or hub-installed project whose macros become available to yours. They are installed by adding to <code>packages.yml</code> and running <code>dbt deps</code>.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">packages.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">packages:
+  - package: dbt-labs/dbt_utils
+    version: ["&gt;=1.1.0", "&lt;2.0.0"]
+  - package: calogica/dbt_expectations
+    version: ["&gt;=0.10.0", "&lt;0.11.0"]</code></pre>
+</div>
+
+<div class="tryit"><div class="tryit__head">{{icon:terminal}} Try it<span class="kbd">terminal</span></div>
+  <div class="tryit__body">
+    <div class="codeblock">
+      <div class="codeblock__bar">
+        <span class="codeblock__dots"><i></i><i></i><i></i></span>
+        <span class="codeblock__file">terminal</span>
+        <span class="codeblock__lang">bash</span>
+        <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+      </div>
+      <pre><code class="language-bash">dbt deps</code></pre>
+    </div>
+    <p>dbt downloads each package into <code>dbt_packages/</code> and registers its macros. Commit <code>packages.yml</code> and <code>package-lock.yml</code>, not the downloaded folder.</p>
+  </div>
+</div>
+
+<p>Now call the package's macros with dot notation. This one builds a stable surrogate key from several columns:</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">models/fct_order_lines.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">select
+    {{ dbt_utils.generate_surrogate_key(['order_id', 'order_line_id']) }} as order_line_sk,
+    order_id,
+    product_id,
+    quantity * unit_price as line_total
+from {{ ref('stg_order_lines') }}</code></pre>
+</div>
+
+{{diagram:layers|Package macros and your own macros plug into every layer of the project — staging through marts.}}
+
+<h2>Macro namespacing and safe overrides</h2>
+
+<p>Macros share one global namespace, so a careless name can collide with a package. dbt's convention is simple: use a descriptive prefix, and reference package macros with <code>package.macro</code>.</p>
+
+<div class="table-wrap">
+  <table class="table--compare table--zebra">
+    <thead><tr><th>Where the macro lives</th><th>How you call it</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Your project</td><td>Bare name</td><td><code>{{ cents_to_dollars('amount_cents') }}</code></td></tr>
+      <tr><td>Installed package</td><td>Package dot macro</td><td><code>{{ dbt_utils.generate_surrogate_key([...]) }}</code></td></tr>
+      <tr><td>Adapter-aware</td><td>Primary dispatch name</td><td><code>{{ month_start('order_date') }}</code></td></tr>
+      <tr><td>Your override</td><td>Same <code>default__</code> name</td><td><code>default__generate_surrogate_key</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p>To change how a <em>package's</em> internal macros behave, add a project-level <code>dispatch</code> config and put your project ahead of the package. Then define the override with the conventional <code>default__</code> name.</p>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">dbt_project.yml</span>
+    <span class="codeblock__lang">yaml</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-yaml">dispatch:
+  - macro_namespace: dbt_utils
+    search_order: ['my_shop', 'dbt_utils']</code></pre>
+</div>
+
+<div class="codeblock">
+  <div class="codeblock__bar">
+    <span class="codeblock__dots"><i></i><i></i><i></i></span>
+    <span class="codeblock__file">macros/override_surrogate_key.sql</span>
+    <span class="codeblock__lang">sql</span>
+    <button class="codeblock__copy" type="button">{{icon:copy}} <span data-copylabel>Copy</span></button>
+  </div>
+  <pre><code class="language-sql">{% macro default__generate_surrogate_key(field_list) %}
+    {{ return(my_shop_hash(field_list)) }}
+{% endmacro %}</code></pre>
+</div>
+
+<div class="callout callout--warning">
+  <div class="callout__icon">{{icon:lock}}</div>
+  <div>
+    <div class="callout__title">Do not override built-in context properties</div>
+    <p><code>ref</code>, <code>source</code> and <code>config</code> cannot be overridden through dispatch — they are dbt context properties, not dispatched macros. If you need a custom <code>generate_schema_name</code>, override that by name or register a <code>default__</code> candidate in a package.</p>
+  </div>
+</div>
+
+<h2>Pitfalls to avoid</h2>
+
+<div class="accordion">
+  <details class="acc"><summary>Calling <code>run_query</code> without an <code>execute</code> guard</summary><div class="acc__body"><p>Parsing happens for every command, so the query has not run and the result is <code>none</code>. Guard the result access with <code>{% if execute %}</code>.</p></div></details>
+  <details class="acc"><summary>Side effects firing during <code>dbt docs generate</code></summary><div class="acc__body"><p><code>execute</code> is true whenever dbt compiles with a connection. Add <code>flags.WHICH in ['run', 'build']</code> before any DML.</p></div></details>
+  <details class="acc"><summary>Shadowing a package macro by accident</summary><div class="acc__body"><p>Prefix your macros (<code>my_shop_</code>) and call package macros through their namespace so there is never ambiguity.</p></div></details>
+  <details class="acc"><summary>Over-macroing</summary><div class="acc__body"><p>A macro that hides a single simple expression makes the model harder to read. Reach for a macro when the logic repeats or genuinely varies by adapter.</p></div></details>
+</div>
+
+<h2>Key takeaways</h2>
+
+<ul class="checklist">
+  <li>{{icon:circle-check}}<span>Macros render SQL at compile time; they are functions for Jinja, not stored procedures.</span></li>
+  <li>{{icon:circle-check}}<span><code>adapter.dispatch</code> lets one macro call resolve to adapter-specific SQL, with a <code>default__</code> fallback.</span></li>
+  <li>{{icon:circle-check}}<span><code>run_query</code> fetches warehouse results during compilation; guard result access with <code>{% if execute %}</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Scope side-effecting SQL to specific commands with <code>flags.WHICH</code> so docs builds stay read-only.</span></li>
+  <li>{{icon:circle-check}}<span>Packages are installed via <code>packages.yml</code> and <code>dbt deps</code>; call their macros with <code>package.macro</code>.</span></li>
+  <li>{{icon:circle-check}}<span>Namespace your macros and override package behavior with a <code>dispatch</code> search_order plus a <code>default__</code> macro.</span></li>
+</ul>
+
+<div class="quiz" data-explain="adapter.dispatch chooses the implementation whose prefix matches the active adapter, falling back to default__.">
+  <div class="quiz__q">{{icon:circle-help}} <span>Which function routes a macro call to the correct adapter-specific implementation?</span></div>
+  <div class="quiz__options">
+    <button class="quiz__option" type="button"><span class="mark">A</span><span><code>run_query</code></span></button>
+    <button class="quiz__option" type="button" data-correct="true"><span class="mark">B</span><span><code>adapter.dispatch</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">C</span><span><code>ref</code></span></button>
+    <button class="quiz__option" type="button"><span class="mark">D</span><span><code>load_result</code></span></button>
+  </div>
+  <div class="quiz__feedback"></div>
+</div>
+
+<div class="callout callout--tip">
+  <div class="callout__icon">{{icon:sparkles}}</div>
+  <div>
+    <div class="callout__title">Up next</div>
+    <p>Macros are testable, reusable logic — so let's prove them on every change. In <a href="./3-ci-cd-github-actions.html">CI/CD with GitHub Actions</a> you'll write a real workflow that builds only what a pull request touched.</p>
+  </div>
+</div>
